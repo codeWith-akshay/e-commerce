@@ -1,0 +1,39 @@
+import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PrismaClient Singleton  (Prisma 7 + pg driver adapter)
+//
+// In development, Next.js hot-reload creates new module instances on each
+// code change, which would spawn multiple PrismaClient connections and exhaust
+// the database connection pool.
+//
+// Solution: attach the client to `globalThis` so it survives HMR reloads.
+// In production, we always create a fresh instance (no HMR).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const globalForPrisma = globalThis as unknown as {
+  prisma: PrismaClient | undefined;
+};
+
+function createPrismaClient(): PrismaClient {
+  const adapter = new PrismaPg({
+    connectionString: process.env.DATABASE_URL!,
+  });
+
+  return new PrismaClient({
+    adapter,
+    log:
+      process.env.NODE_ENV === "development"
+        ? ["query", "error", "warn"]
+        : ["error"],
+  });
+}
+
+export const prisma = globalForPrisma.prisma ?? createPrismaClient();
+
+if (process.env.NODE_ENV !== "production") {
+  globalForPrisma.prisma = prisma;
+}
+
+export default prisma;

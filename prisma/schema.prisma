@@ -1,0 +1,254 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────
+
+enum Role {
+  USER
+  ADMIN
+  SUPERADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+// ─────────────────────────────────────────
+// Models
+// ─────────────────────────────────────────
+
+model User {
+  id             String    @id @default(cuid())
+  name           String
+  email          String    @unique
+  password       String
+  role           Role      @default(USER)
+  /// Auth.js: set when the user verifies their email address
+  emailVerified  DateTime?
+  /// Auth.js: profile picture URL
+  image          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Relations
+  carts     Cart[]
+  orders    Order[]
+  wishlists Wishlist[]
+
+  // Indexes
+  @@index([role])       // fast RBAC / admin panel queries
+  @@index([createdAt])  // pagination / sorting by join date
+  @@map("users")
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  title       String
+  description String
+  price       Float
+  stock       Int
+  rating      Float    @default(0)
+  images      String[] @default([])
+  createdAt   DateTime @default(now())
+
+  // Foreign key
+  categoryId  String
+
+  // Relations
+  category    Category    @relation(fields: [categoryId], references: [id])
+  carts       Cart[]
+  orderItems  OrderItem[]
+  wishlists   Wishlist[]
+  deal        Deal?
+  newArrival  NewArrival?
+
+  // Indexes
+  @@index([categoryId])                    // category filter, related products
+  @@index([rating])                        // homepage featured + sort-by-rating
+  @@index([createdAt])                     // default sort on admin + public listings
+  @@index([price])                         // sort-by-price option
+  @@index([categoryId, rating])            // related products: WHERE categoryId = ? ORDER BY rating DESC
+  @@index([categoryId, createdAt])         // category filter + paginated default sort
+  @@index([categoryId, price])             // category filter + sort-by-price
+  @@map("products")
+}
+
+model Cart {
+  id        String   @id @default(cuid())
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now())
+
+  // Foreign keys
+  userId    String
+  productId String
+
+  // Relations
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  // One cart row per user+product combination
+  @@unique([userId, productId])
+  // Indexes for fast lookups by either FK
+  @@index([userId])
+  @@index([productId])
+  @@map("carts")
+}
+
+// ─────────────────────────────────────────
+// Orders
+// ─────────────────────────────────────────
+
+model Order {
+  id          String      @id @default(cuid())
+  totalAmount Float
+  status      OrderStatus @default(PENDING)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Foreign keys
+  userId String
+
+  // Relations
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orderItems OrderItem[]
+
+  @@index([userId])
+  @@index([createdAt])             // ORDER BY createdAt DESC (default sort)
+  @@index([status, createdAt])     // filtered + paginated admin queries
+  @@map("orders")
+}
+
+model OrderItem {
+  id       String @id @default(cuid())
+  quantity Int
+  price    Float  // snapshot of product price at time of order
+
+  // Foreign keys
+  orderId   String
+  productId String
+
+  // Relations
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  // One row per product per order
+  @@unique([orderId, productId])
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+// ─────────────────────────────────────────
+// Wishlist
+// ─────────────────────────────────────────
+
+model Wishlist {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  // Foreign keys
+  userId    String
+  productId String
+
+  // Relations
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  // One wishlist row per user+product combination
+  @@unique([userId, productId])
+  @@index([userId])
+  @@index([productId])
+  @@map("wishlists")
+}
+
+// ─────────────────────────────────────────
+// Deals
+// ─────────────────────────────────────────
+
+model Deal {
+  id              String   @id @default(cuid())
+  discountPercent Float    // e.g. 25 means 25 % off the product price
+  badgeLabel      String   @default("Deal")  // "Flash Sale", "Weekend Deal" …
+  startsAt        DateTime @default(now())
+  endsAt          DateTime
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  // Foreign key — one deal per product
+  productId String @unique
+
+  // Relations
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([isActive, endsAt])      // filter currently-active deals
+  @@index([discountPercent])       // sort by biggest discount
+  @@map("deals")
+}
+
+// ─────────────────────────────────────────
+// New Arrivals
+// ─────────────────────────────────────────
+
+model NewArrival {
+  id         String   @id @default(cuid())
+  featuredAt DateTime @default(now())
+  isActive   Boolean  @default(true)
+
+  // Foreign key — each product featured at most once
+  productId String @unique
+
+  // Relations
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([isActive, featuredAt])  // filter active new arrivals, sorted by date
+  @@map("new_arrivals")
+}
+
+// ─────────────────────────────────────────
+// Categories
+// ─────────────────────────────────────────
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  slug        String   @unique  // URL-friendly identifier, e.g. "mens-clothing"
+  description String?
+  imageUrl    String?           // optional category banner/icon
+  createdAt   DateTime @default(now())
+
+  // Relations
+  products    Product[]
+
+  @@index([name])   // search/filter by name
+  @@index([slug])   // URL routing lookups
+  @@map("categories")
+}
+
+// ─────────────────────────────────────────
+// Newsletter Subscriptions
+// ─────────────────────────────────────────
+
+model NewsletterSubscription {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  subscribedAt DateTime @default(now())
+  isActive     Boolean  @default(true)
+
+  @@index([email])
+  @@index([isActive])
+  @@map("newsletter_subscriptions")
+}
