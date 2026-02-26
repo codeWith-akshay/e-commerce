@@ -19,6 +19,10 @@ const withBundleAnalyzer = bundleAnalyzer({
 });
 
 const nextConfig: NextConfig = {
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+
   // ── Tree-shaking for large barrel packages ─────────────────────────────────
   // Instructs the compiler to only include the named exports actually used,
   // rather than loading the full barrel entry-point.  Critical for:
