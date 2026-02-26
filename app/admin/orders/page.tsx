@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { Eye } from "lucide-react";
 import { Prisma, OrderStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import Pagination from "@/components/Pagination";
@@ -11,14 +10,6 @@ export const revalidate = 60;
 const PAGE_SIZE = 15;
 
 const VALID_STATUSES = new Set<string>(Object.values(OrderStatus));
-
-const STATUS_STYLES: Record<string, string> = {
-  PENDING: "bg-yellow-50 text-yellow-700 ring-yellow-600/20",
-  PROCESSING: "bg-blue-50 text-blue-700 ring-blue-600/20",
-  SHIPPED: "bg-indigo-50 text-indigo-700 ring-indigo-600/20",
-  DELIVERED: "bg-green-50 text-green-700 ring-green-600/20",
-  CANCELLED: "bg-red-50 text-red-700 ring-red-600/20",
-};
 
 // ✅ Strong Prisma Type
 type OrderWithRelations = Prisma.OrderGetPayload<{
@@ -49,7 +40,11 @@ interface PageProps {
   }>;
 }
 
-async function getOrders(page: number, search: string, status: string) {
+async function getOrders(
+  page: number,
+  search: string,
+  status: string,
+): Promise<{ orders: OrderWithRelations[]; total: number; totalPages: number }> {
   const where: Prisma.OrderWhereInput = {};
 
   if (status && VALID_STATUSES.has(status)) {
@@ -85,7 +80,7 @@ async function getOrders(page: number, search: string, status: string) {
   ]);
 
   return {
-    orders: orders as OrderWithRelations[],
+    orders,
     total,
     totalPages: Math.max(1, Math.ceil(total / PAGE_SIZE)),
   };
@@ -151,11 +146,10 @@ export default async function AdminOrdersPage({ searchParams }: PageProps) {
           <table className="min-w-full text-sm">
             <tbody className="divide-y divide-slate-100">
               {orders.map((order) => {
-                // ✅ Fully Typed – No implicit any
-                const itemCount: number = order.orderItems.reduce(
-                  (sum: number, item: { quantity: number }) =>
+                const itemCount = order.orderItems.reduce(
+                  (sum: number, item: OrderWithRelations["orderItems"][number]) =>
                     sum + item.quantity,
-                  0
+                  0,
                 );
 
                 return (
