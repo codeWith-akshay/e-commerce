@@ -2,7 +2,6 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { ChevronLeft, User, Calendar, Hash } from "lucide-react";
-import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import AdminOrderStatusUpdate from "@/components/AdminOrderStatusUpdate";
 
@@ -24,39 +23,9 @@ const STATUS_STYLES: Record<string, string> = {
   CANCELLED:  "bg-red-50    text-red-700    ring-red-600/20",
 };
 
-// ── Types ───────────────────────────────────────────────────────────────────
-
-type OrderDetail = Prisma.OrderGetPayload<{
-  select: {
-    id:          true;
-    totalAmount: true;
-    status:      true;
-    createdAt:   true;
-    updatedAt:   true;
-    user: {
-      select: { id: true; name: true; email: true; createdAt: true };
-    };
-    orderItems: {
-      select: {
-        id:       true;
-        quantity: true;
-        price:    true;
-        product: {
-          select: {
-            id:       true;
-            title:    true;
-            category: { select: { name: true } };
-            images:   true;
-          };
-        };
-      };
-    };
-  };
-}>;
-
 // ── Data fetching ─────────────────────────────────────────────────────────────
 
-async function getOrder(id: string): Promise<OrderDetail | null> {
+async function getOrder(id: string) {
   return prisma.order.findUnique({
     where: { id },
     select: {
@@ -82,6 +51,10 @@ async function getOrder(id: string): Promise<OrderDetail | null> {
     },
   });
 }
+
+// Infer the full order shape from the query — no Prisma namespace needed.
+// NonNullable unwraps the `| null` that findUnique adds.
+type OrderDetail = NonNullable<Awaited<ReturnType<typeof getOrder>>>;
 
 export async function generateMetadata({ params }: PageProps) {
   const { id } = await params;

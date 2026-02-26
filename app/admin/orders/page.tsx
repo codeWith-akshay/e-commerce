@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Prisma, OrderStatus } from "@prisma/client";
+import { OrderStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import Pagination from "@/components/Pagination";
 import AdminProductSearch from "@/components/AdminProductSearch";
@@ -11,27 +11,6 @@ const PAGE_SIZE = 15;
 
 const VALID_STATUSES = new Set<string>(Object.values(OrderStatus));
 
-// ✅ Strong Prisma Type
-type OrderWithRelations = Prisma.OrderGetPayload<{
-  select: {
-    id: true;
-    totalAmount: true;
-    status: true;
-    createdAt: true;
-    user: {
-      select: {
-        email: true;
-        name: true;
-      };
-    };
-    orderItems: {
-      select: {
-        quantity: true;
-      };
-    };
-  };
-}>;
-
 interface PageProps {
   searchParams: Promise<{
     page?: string;
@@ -40,12 +19,11 @@ interface PageProps {
   }>;
 }
 
-async function getOrders(
-  page: number,
-  search: string,
-  status: string,
-): Promise<{ orders: OrderWithRelations[]; total: number; totalPages: number }> {
-  const where: Prisma.OrderWhereInput = {};
+async function getOrders(page: number, search: string, status: string) {
+  // Derive the where-clause type directly from prisma.order.findMany —
+  // avoids importing the Prisma namespace which is not exported in Prisma 7.
+  type Where = NonNullable<NonNullable<Parameters<typeof prisma.order.findMany>[0]>["where"]>;
+  const where: Where = {};
 
   if (status && VALID_STATUSES.has(status)) {
     where.status = status as OrderStatus;
@@ -85,6 +63,9 @@ async function getOrders(
     totalPages: Math.max(1, Math.ceil(total / PAGE_SIZE)),
   };
 }
+
+// Infer the order row shape from the query return — no Prisma namespace needed.
+type OrderWithRelations = Awaited<ReturnType<typeof getOrders>>["orders"][number];
 
 export default async function AdminOrdersPage({ searchParams }: PageProps) {
   const { page: pageParam, search = "", status = "" } = await searchParams;
