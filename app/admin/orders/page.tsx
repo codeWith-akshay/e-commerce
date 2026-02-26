@@ -149,7 +149,7 @@ export default async function AdminOrdersPage({ searchParams }: PageProps) {
                 </tr>
               ) : (
                 orders.map((order) => {
-                  const itemCount = order.orderItems.reduce(
+                  const itemCount = order.orderItems.reduce<number>(
                     (sum, item) => sum + item.quantity,
                     0,
                   );
