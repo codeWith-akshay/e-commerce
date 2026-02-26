@@ -69,7 +69,7 @@ export default async function AdminOrderDetailPage({ params }: PageProps) {
   const statusLabel =
     order.status.charAt(0) + order.status.slice(1).toLowerCase();
 
-  const itemCount = order.orderItems.reduce((s, i) => s + i.quantity, 0);
+  const itemCount = order.orderItems.reduce<number>((s, i) => s + i.quantity, 0);
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
