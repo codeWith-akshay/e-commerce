@@ -27,10 +27,19 @@ const ROLE_REFRESH_INTERVAL_MS = 60 * 60 * 1_000; // 1 hour
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
 
-  // Trust the host derived from the incoming request (required in production
-  // and on self-hosted / containerised deployments where AUTH_URL may not
-  // exactly match every reverse-proxy header). Auth.js still validates the
-  // SECRET, so forged tokens are still rejected.
+  // ── trustHost ────────────────────────────────────────────────────────────
+  // Instructs Auth.js to derive the canonical origin from the incoming
+  // request's Host / X-Forwarded-Host header instead of requiring a static
+  // AUTH_URL.  This makes the app work correctly across:
+  //   • Vercel production   (e.g. https://shopingnest.vercel.app)
+  //   • Vercel preview URLs (dynamically generated per deployment)
+  //   • Local dev           (http://localhost:3000)
+  //
+  // AUTH_SECRET is still verified on every request, so no forged tokens
+  // can pass even though we trust the host header.
+  //
+  // Do NOT set AUTH_URL on Vercel — Vercel injects VERCEL_URL automatically
+  // and Auth.js v5 will construct the correct https:// origin from it.
   trustHost: true,
 
   providers: [
