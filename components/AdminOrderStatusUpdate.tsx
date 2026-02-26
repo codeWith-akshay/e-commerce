@@ -1,22 +1,16 @@
 "use client";
 
 import { useActionState, useState, useEffect } from "react";
-import { OrderStatus } from "@prisma/client";
+// import type is erased at build time — no Prisma code reaches the browser.
+import type { OrderStatus } from "@prisma/client";
 import { updateOrderStatusAction, type UpdateOrderStatusState } from "@/lib/actions/order";
 import { CheckCircle, AlertCircle, Loader2 } from "lucide-react";
+import { ORDER_STATUSES, ORDER_STATUS_LABELS } from "@/lib/order-statuses";
 
-// ── Derive statuses from the Prisma enum — stays in sync automatically ────────
-const STATUS_LABELS: Record<OrderStatus, string> = {
-  PENDING:    "Pending",
-  PROCESSING: "Processing",
-  SHIPPED:    "Shipped",
-  DELIVERED:  "Delivered",
-  CANCELLED:  "Cancelled",
-};
-
-const STATUSES = (Object.values(OrderStatus) as OrderStatus[]).map((v) => ({
-  value: v,
-  label: STATUS_LABELS[v],
+// ── Statuses derived from the shared runtime constant (no Prisma import) ──────
+const STATUSES = ORDER_STATUSES.map((v) => ({
+  value: v as OrderStatus,
+  label: ORDER_STATUS_LABELS[v],
 }));
 
 interface Props {
