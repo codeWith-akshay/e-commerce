@@ -118,7 +118,7 @@ export default async function AdminOrderDetailPage({ params }: PageProps) {
               </h3>
             </div>
             <ul className="divide-y divide-slate-100">
-              {order.orderItems.map((item) => (
+              {order.orderItems.map((item: OrderDetail["orderItems"][number]) => (
                 <li key={item.id} className="flex items-center gap-4 px-5 py-4">
                   {/* Product image */}
                   <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg border border-slate-100 bg-slate-50">
