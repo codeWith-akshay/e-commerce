@@ -17,12 +17,15 @@ import {
 import { RelatedProductsSkeleton } from "@/components/RelatedProducts";
 import ImageGalleryDynamic from "@/components/ImageGalleryDynamic";
 import AddToCartFormDynamic from "@/components/AddToCartFormDynamic";
+import ProductReviews from "@/components/ProductReviews";
 import prisma from "@/lib/prisma";
+import { isEnabled } from "@/lib/actions/feature-flags";
+import { FLAGS }     from "@/lib/flags";
 
 // ── Cache strategy ────────────────────────────────────────────────────────────
-// Product detail pages change infrequently.  ISR with a 1-hour window gives
-// near-static performance while still picking up price / stock updates.
-export const revalidate = 3600;
+// Product detail pages change infrequently.  ISR with a 5-minute window matches
+// the Redis TTL for feature flags so flag changes propagate without a full redeploy.
+export const revalidate = 300;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Dynamic imports — client islands, code-split
@@ -194,7 +197,10 @@ export default async function ProductPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const product = await getProduct(id);
+  const [product, reviewsEnabled] = await Promise.all([
+    getProduct(id),
+    isEnabled(FLAGS.REVIEWS_ENABLED),
+  ]);
 
   if (!product) notFound();
 
@@ -343,6 +349,9 @@ export default async function ProductPage({
         excludeId={product.id}
         limit={4}
       />
+
+      {/* ── Customer reviews ── */}
+      {reviewsEnabled && <ProductReviews productId={product.id} />}
     </div>
   );
 }

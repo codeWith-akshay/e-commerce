@@ -11,32 +11,76 @@ import {
   X,
   LogOut,
   ChevronRight,
+  ChevronDown,
   Users,
   Shield,
+  Archive,
+  ClipboardList,
+  ToggleLeft,
+  MessageSquare,
+  BarChart3,
+  AlertTriangle,
+  List,
+  ArrowUpDown,
 } from "lucide-react";
 import LogoutButton from "@/components/LogoutButton";
 
+type IconComponent = React.ComponentType<{ className?: string }>;
+
 interface SidebarLink {
+  kind: "link";
   label: string;
   href: string;
-  icon: React.ComponentType<{ className?: string }>;
-  badge?: string;
+  icon: IconComponent;
 }
 
-const adminLinks: SidebarLink[] = [
-  { label: "Dashboard", href: "/admin",          icon: LayoutDashboard },
-  { label: "Products",  href: "/admin/products",  icon: Package },
-  { label: "Orders",    href: "/admin/orders",    icon: ShoppingCart },
+interface SidebarGroup {
+  kind: "group";
+  label: string;
+  icon: IconComponent;
+  /** Base path — used to detect if ANY child is active. */
+  basePath: string;
+  children: { label: string; href: string; icon: IconComponent }[];
+}
+
+type SidebarItem = SidebarLink | SidebarGroup;
+
+const adminLinks: SidebarItem[] = [
+  { kind: "link",  label: "Dashboard",     href: "/admin",               icon: LayoutDashboard },
+  { kind: "link",  label: "Products",      href: "/admin/products",      icon: Package },
+  { kind: "link",  label: "Orders",        href: "/admin/orders",        icon: ShoppingCart },
+  {
+    kind: "group",
+    label: "Inventory",
+    icon: Archive,
+    basePath: "/admin/inventory",
+    children: [
+      { label: "Overview",          href: "/admin/inventory",                  icon: BarChart3 },
+      { label: "All Stock",         href: "/admin/inventory/all",              icon: List },
+      { label: "Low Stock Alerts",  href: "/admin/inventory/low-stock-alerts", icon: AlertTriangle },
+      { label: "Movement Log",      href: "/admin/inventory/movements",        icon: ArrowUpDown },
+    ],
+  },
+  { kind: "link",  label: "Reviews",       href: "/admin/reviews",       icon: MessageSquare },
+  { kind: "link",  label: "Audit Log",     href: "/admin/audit",         icon: ClipboardList },
+  { kind: "link",  label: "Feature Flags", href: "/admin/feature-flags", icon: ToggleLeft },
 ];
 
-const superAdminLinks: SidebarLink[] = [
-  { label: "Users",     href: "/superadmin/users", icon: Users },
+const superAdminLinks: SidebarItem[] = [
+  { kind: "link", label: "Users", href: "/superadmin/users", icon: Users },
 ];
 
 const ADMIN_PAGE_TITLES: Record<string, string> = {
-  "/admin":          "Dashboard",
-  "/admin/products": "Products",
-  "/admin/orders":   "Orders",
+  "/admin":                                 "Dashboard",
+  "/admin/products":                        "Products",
+  "/admin/orders":                          "Orders",
+  "/admin/inventory":                       "Inventory",
+  "/admin/inventory/all":                   "All Stock",
+  "/admin/inventory/low-stock-alerts":      "Low Stock Alerts",
+  "/admin/inventory/movements":             "Movement Log",
+  "/admin/reviews":                         "Reviews",
+  "/admin/audit":                           "Audit Log",
+  "/admin/feature-flags":                  "Feature Flags",
 };
 
 const SUPERADMIN_PAGE_TITLES: Record<string, string> = {
@@ -44,9 +88,16 @@ const SUPERADMIN_PAGE_TITLES: Record<string, string> = {
 };
 
 const ADMIN_PAGE_SUBTITLES: Record<string, string> = {
-  "/admin":          "Store overview & analytics",
-  "/admin/products": "Manage your product catalogue",
-  "/admin/orders":   "Track and fulfil customer orders",
+  "/admin":                                 "Store overview & analytics",
+  "/admin/products":                        "Manage your product catalogue",
+  "/admin/orders":                          "Track and fulfil customer orders",
+  "/admin/inventory":                       "Stock dashboard — KPIs, alerts & full table",
+  "/admin/inventory/all":                   "Browse and filter all inventory records",
+  "/admin/inventory/low-stock-alerts":      "Items at or below their reorder level",
+  "/admin/inventory/movements":             "Full audit trail of every stock change",
+  "/admin/reviews":                         "Approve or reject customer reviews",
+  "/admin/audit":                           "View system-wide activity log",
+  "/admin/feature-flags":                  "Toggle features without a re-deploy",
 };
 
 const SUPERADMIN_PAGE_SUBTITLES: Record<string, string> = {
@@ -74,6 +125,26 @@ function SidebarBody({
   const links = isSuperAdmin ? superAdminLinks : adminLinks;
   const panelLabel = isSuperAdmin ? "Super Admin" : "Admin Panel";
   const roleLabel  = isSuperAdmin ? "Super Administrator" : "Administrator";
+
+  // Track which groups are expanded.
+  // Auto-open any group whose basePath matches the current URL.
+  const [openGroups, setOpenGroups] = useState<Set<string>>(() => {
+    const initial = new Set<string>();
+    for (const item of adminLinks) {
+      if (item.kind === "group" && pathname.startsWith(item.basePath)) {
+        initial.add(item.label);
+      }
+    }
+    return initial;
+  });
+
+  function toggleGroup(label: string) {
+    setOpenGroups((prev) => {
+      const next = new Set(prev);
+      next.has(label) ? next.delete(label) : next.add(label);
+      return next;
+    });
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -103,40 +174,115 @@ function SidebarBody({
         <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
           Navigation
         </p>
-        {links.map((link) => {
-          const active =
-            link.href === "/admin"
-              ? pathname === "/admin"
-              : pathname.startsWith(link.href);
-          const Icon = link.icon;
-          return (
-            <Link
-              key={link.href}
-              href={link.href}
-              onClick={onClose}
-              className={`group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${
-                active
-                  ? "bg-indigo-500/20 text-white"
-                  : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
-              }`}
-              aria-current={active ? "page" : undefined}
-            >
-              {/* Active left bar */}
-              {active && (
-                <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-indigo-400" />
-              )}
-              <span
-                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors ${
+
+        {links.map((item) => {
+          // ── Simple link ──────────────────────────────────────────────────
+          if (item.kind === "link") {
+            const active =
+              item.href === "/admin"
+                ? pathname === "/admin"
+                : pathname.startsWith(item.href);
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={onClose}
+                className={`group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${
+                  active
+                    ? "bg-indigo-500/20 text-white"
+                    : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+                }`}
+                aria-current={active ? "page" : undefined}
+              >
+                {active && (
+                  <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-indigo-400" />
+                )}
+                <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors ${
                   active
                     ? "bg-indigo-500 text-white shadow-md shadow-indigo-500/30"
                     : "bg-white/5 text-slate-400 group-hover:bg-white/10 group-hover:text-slate-200"
+                }`}>
+                  <Icon className="h-3.5 w-3.5" />
+                </span>
+                <span className="flex-1">{item.label}</span>
+                {active && <ChevronRight className="h-3.5 w-3.5 text-indigo-400" />}
+              </Link>
+            );
+          }
+
+          // ── Accordion group ───────────────────────────────────────────────
+          const groupActive = pathname.startsWith(item.basePath);
+          const isOpen      = openGroups.has(item.label);
+          const GroupIcon   = item.icon;
+
+          return (
+            <div key={item.label}>
+              {/* Group toggle button */}
+              <button
+                type="button"
+                onClick={() => toggleGroup(item.label)}
+                className={`group relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${
+                  groupActive
+                    ? "bg-indigo-500/20 text-white"
+                    : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
                 }`}
+                aria-expanded={isOpen}
               >
-                <Icon className="h-3.5 w-3.5" />
-              </span>
-              <span className="flex-1">{link.label}</span>
-              {active && <ChevronRight className="h-3.5 w-3.5 text-indigo-400" />}
-            </Link>
+                {groupActive && (
+                  <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-indigo-400" />
+                )}
+                <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors ${
+                  groupActive
+                    ? "bg-indigo-500 text-white shadow-md shadow-indigo-500/30"
+                    : "bg-white/5 text-slate-400 group-hover:bg-white/10 group-hover:text-slate-200"
+                }`}>
+                  <GroupIcon className="h-3.5 w-3.5" />
+                </span>
+                <span className="flex-1 text-left">{item.label}</span>
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${
+                  isOpen ? "rotate-180 text-indigo-400" : "text-slate-500"
+                }`} />
+              </button>
+
+              {/* Children — animated expand/collapse */}
+              <div className={`overflow-hidden transition-all duration-200 ease-in-out ${
+                isOpen ? "max-h-64 opacity-100" : "max-h-0 opacity-0"
+              }`}>
+                <div className="ml-3 mt-0.5 flex flex-col gap-0.5 border-l border-white/10 pl-3 pb-1">
+                  {item.children.map((child) => {
+                    const childActive =
+                      child.href === item.basePath
+                        ? pathname === item.basePath
+                        : pathname === child.href || pathname.startsWith(child.href + "/");
+                    const ChildIcon = child.icon;
+                    return (
+                      <Link
+                        key={child.href}
+                        href={child.href}
+                        onClick={onClose}
+                        className={`group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${
+                          childActive
+                            ? "bg-indigo-500/25 text-white"
+                            : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+                        }`}
+                        aria-current={childActive ? "page" : undefined}
+                      >
+                        <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md transition-colors ${
+                          childActive
+                            ? "bg-indigo-500 text-white shadow-sm shadow-indigo-500/30"
+                            : "bg-white/5 text-slate-500 group-hover:bg-white/10 group-hover:text-slate-300"
+                        }`}>
+                          <ChildIcon className="h-3 w-3" />
+                        </span>
+                        <span className="flex-1">{child.label}</span>
+                        {childActive && <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
           );
         })}
       </nav>

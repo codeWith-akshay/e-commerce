@@ -10,7 +10,7 @@ import {
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Search, Loader2, X, ArrowRight } from "lucide-react";
-import type { SearchResult } from "@/app/api/search/route";
+import type { SearchHit, SearchResponse } from "@/app/api/search/route";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SearchBar
@@ -49,7 +49,7 @@ export default function SearchBar({
   const router = useRouter();
 
   const [query,    setQuery]    = useState("");
-  const [results,  setResults]  = useState<SearchResult[]>([]);
+  const [results,  setResults]  = useState<SearchHit[]>([]);
   const [loading,  setLoading]  = useState(false);
   const [open,     setOpen]     = useState(false);
   const [cursor,   setCursor]   = useState(-1);   // keyboard-nav index
@@ -72,8 +72,8 @@ export default function SearchBar({
         { signal: abortRef.current.signal },
       );
       if (!res.ok) throw new Error("search failed");
-      const data: SearchResult[] = await res.json();
-      setResults(data);
+      const data: SearchResponse = await res.json();
+      setResults(data.hits ?? []);
       setCursor(-1);
       setOpen(true);
     } catch (err: unknown) {
@@ -302,9 +302,9 @@ export default function SearchBar({
                     >
                       {/* Thumbnail */}
                       <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-xl border border-gray-100 bg-gray-50">
-                        {r.image ? (
+                        {r.images[0] ? (
                           <Image
-                            src={r.image}
+                            src={r.images[0]}
                             alt={r.title}
                             fill
                             sizes="40px"

@@ -22,7 +22,12 @@ function CheckoutFormSkeleton() {
   );
 }
 
-const CheckoutFormDynamic = dynamic(
+interface CheckoutFormProps {
+  subtotal: number;
+  shipping: number;
+}
+
+const CheckoutFormLoaded = dynamic(
   () => import("@/components/CheckoutForm"),
   {
     ssr: false,
@@ -30,4 +35,7 @@ const CheckoutFormDynamic = dynamic(
   }
 );
 
-export default CheckoutFormDynamic;
+export default function CheckoutFormDynamic(props: CheckoutFormProps) {
+  return <CheckoutFormLoaded {...props} />;
+}
+

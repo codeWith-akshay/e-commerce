@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { ShoppingBag, ChevronLeft, ShieldCheck } from "lucide-react";
 import type { Metadata } from "next";
 import { getCart } from "@/lib/actions/cart";
+import { getShippingCalc } from "@/lib/actions/order";
 import { getSessionUserId } from "@/lib/session";
 
 // CheckoutFormDynamic is a Client Component that wraps the lazy-loaded form
@@ -16,9 +17,6 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
   title: "Checkout | ShopNext",
 };
-
-const FREE_SHIPPING_THRESHOLD = 50;
-const SHIPPING_FEE = 5.99;
 
 export default async function CheckoutPage() {
   // ── Auth guard ─────────────────────────────────────────────────────────────
@@ -35,10 +33,16 @@ export default async function CheckoutPage() {
   const items = result.data;
 
   // ── Calculations ───────────────────────────────────────────────────────────
-  const subtotal = items.reduce((s, i) => s + i.product.price * i.quantity, 0);
-  const shipping = subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_FEE;
-  const total = Math.round((subtotal + shipping) * 100) / 100;
+  const subtotal = items.reduce(
+    (s, i) => s + (i.product.price + (i.variant?.priceDelta ?? 0)) * i.quantity,
+    0
+  );
   const totalQty = items.reduce((s, i) => s + i.quantity, 0);
+  // getShippingCalc checks the FREE_SHIPPING_PROMO feature flag — same logic
+  // used by placeOrder so the displayed total matches what gets charged.
+  const shippingCalc = await getShippingCalc(subtotal);
+  const shipping     = shippingCalc.amount;
+  const total        = Math.round((subtotal + shipping) * 100) / 100;
 
   return (
     <div className="pb-16">
@@ -61,7 +65,7 @@ export default async function CheckoutPage() {
             Shipping information
           </h2>
           <Suspense fallback={null}>
-            <CheckoutForm />
+            <CheckoutForm subtotal={subtotal} shipping={shipping} />
           </Suspense>
 
           {/* Trust badges */}
@@ -109,11 +113,18 @@ export default async function CheckoutPage() {
 
                   {/* Name + price */}
                   <div className="flex flex-1 items-center justify-between gap-2 min-w-0">
-                    <p className="truncate text-sm font-medium text-gray-800">
-                      {item.product.title}
-                    </p>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-gray-800">
+                        {item.product.title}
+                      </p>
+                      {item.variant && (
+                        <p className="text-xs text-gray-400">
+                          {item.variant.name}: {item.variant.value}
+                        </p>
+                      )}
+                    </div>
                     <p className="shrink-0 text-sm font-semibold text-gray-900">
-                      ${(item.product.price * item.quantity).toFixed(2)}
+                      ${((item.product.price + (item.variant?.priceDelta ?? 0)) * item.quantity).toFixed(2)}
                     </p>
                   </div>
                 </li>
@@ -135,9 +146,10 @@ export default async function CheckoutPage() {
                 <span className="font-medium text-gray-900">${shipping.toFixed(2)}</span>
               )}
             </div>
-            {shipping > 0 && (
+            {/* Only show the upsell hint when the promo is actually active */}
+            {shippingCalc.promoActive && shipping > 0 && (
               <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                Add ${(FREE_SHIPPING_THRESHOLD - subtotal).toFixed(2)} more for free shipping
+                Add ${(shippingCalc.threshold - subtotal).toFixed(2)} more for free shipping
               </p>
             )}
           </div>

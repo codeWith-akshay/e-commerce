@@ -76,10 +76,12 @@ export default function DealCard({
   deal,
   priority = false,
   isWishlisted = false,
+  showWishlist = true,
 }: {
-  deal:         DealListItem;
-  priority?:    boolean;
+  deal:          DealListItem;
+  priority?:     boolean;
   isWishlisted?: boolean;
+  showWishlist?: boolean;
 }) {
   const { product, discountPercent, badgeLabel, endsAt } = deal;
   const image      = product.images[0];
@@ -141,9 +143,11 @@ export default function DealCard({
         )}
 
         {/* Wishlist */}
-        <div className="absolute right-2.5 bottom-2.5 z-10 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-          <WishlistButton productId={product.id} isWishlisted={isWishlisted} />
-        </div>
+        {showWishlist && (
+          <div className="absolute right-2.5 bottom-2.5 z-10 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+            <WishlistButton productId={product.id} isWishlisted={isWishlisted} />
+          </div>
+        )}
       </div>
 
       {/* ── Info ── */}

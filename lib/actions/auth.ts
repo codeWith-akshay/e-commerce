@@ -7,6 +7,7 @@ import { AuthError } from "next-auth";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { signIn, signOut } from "@/lib/auth";
+import { loginSchema, registerSchema } from "@/lib/validations/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -34,14 +35,19 @@ export async function loginAction(
   _prevState: AuthResult | null,
   formData: FormData
 ): Promise<AuthResult> {
-  const email    = (formData.get("email")    as string | null)?.trim().toLowerCase() ?? "";
-  // Trim leading/trailing whitespace from the password to guard against
-  // accidental spaces introduced by copy-paste from terminals or chat messages.
-  const password = (formData.get("password") as string | null)?.trim() ?? "";
+  // ── Validate with Zod ──────────────────────────────────────────────────────
+  const parsed = loginSchema.safeParse({
+    email:    formData.get("email"),
+    password: formData.get("password"),
+  });
 
-  // ── Validate ───────────────────────────────────────────────────────────────
-  if (!email)    return { success: false, error: "Email is required.",    field: "email"    };
-  if (!password) return { success: false, error: "Password is required.", field: "password" };
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    const field = first?.path[0] as "email" | "password" | undefined;
+    return { success: false, error: first?.message ?? "Invalid input.", field };
+  }
+
+  const { email, password } = parsed.data;
 
   try {
     // redirect: false — sets the JWT cookie without throwing NEXT_REDIRECT,
@@ -59,8 +65,23 @@ export async function loginAction(
   //    same Server Action *request*.  A direct Prisma lookup is reliable. ──
   const dbUser      = await prisma.user.findUnique({
     where:  { email },
-    select: { role: true },
+    select: { role: true, isActive: true, isBanned: true },
   });
+
+  if (dbUser?.isBanned) {
+    return { success: false, error: "Your account has been suspended. Please contact support." };
+  }
+
+  if (dbUser?.isActive === false) {
+    return { success: false, error: "Your account is inactive. Please contact support." };
+  }
+
+  // Update lastLoginAt in the background (non-blocking)
+  prisma.user.update({
+    where:  { email },
+    data:   { lastLoginAt: new Date() },
+  }).catch(() => { /* non-critical */ });
+
   const role        = dbUser?.role ?? "USER";
   const destination = ROLE_REDIRECT[role] ?? "/";
 
@@ -76,23 +97,21 @@ export async function registerAction(
   _prevState: AuthResult | null,
   formData: FormData
 ): Promise<AuthResult> {
-  const name = (formData.get("name") as string | null)?.trim() ?? "";
-  const email = (formData.get("email") as string | null)?.trim().toLowerCase() ?? "";
-  const password = (formData.get("password") as string | null) ?? "";
+  // ── Validate with Zod ──────────────────────────────────────────────────────
+  const parsed = registerSchema.safeParse({
+    name:            formData.get("name"),
+    email:           formData.get("email"),
+    password:        formData.get("password"),
+    confirmPassword: formData.get("confirmPassword") ?? formData.get("password"),
+  });
 
-  // ── Validate ───────────────────────────────────────────────────────────────
-  if (!name) return { success: false, error: "Name is required.", field: "name" };
-  if (name.length < 2) return { success: false, error: "Name must be at least 2 characters.", field: "name" };
-
-  if (!email) return { success: false, error: "Email is required.", field: "email" };
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return { success: false, error: "Enter a valid email address.", field: "email" };
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    const field = first?.path[0] as "email" | "password" | "name" | undefined;
+    return { success: false, error: first?.message ?? "Invalid input.", field };
   }
 
-  if (!password) return { success: false, error: "Password is required.", field: "password" };
-  if (password.length < 8) {
-    return { success: false, error: "Password must be at least 8 characters.", field: "password" };
-  }
+  const { name, email, password } = parsed.data;
 
   try {
     const hashed = await bcrypt.hash(password, 12);

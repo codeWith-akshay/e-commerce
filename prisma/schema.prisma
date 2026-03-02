@@ -21,10 +21,90 @@ enum Role {
 
 enum OrderStatus {
   PENDING
+  PAYMENT_FAILED   // transient: one attempt failed, retries still available
   PROCESSING
   SHIPPED
   DELIVERED
   CANCELLED
+  PAYMENT_LOCKED   // terminal: all retries exhausted; stock has been restored
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PaymentProvider {
+  STRIPE
+  RAZORPAY
+  PAYPAL
+  COD
+}
+
+enum CouponType {
+  PERCENTAGE
+  FIXED_AMOUNT
+  FREE_SHIPPING
+}
+
+enum NotificationType {
+  ORDER_PLACED
+  ORDER_SHIPPED
+  ORDER_DELIVERED
+  PAYMENT_FAILED
+  LOW_STOCK
+  PRICE_DROP
+  REVIEW_REPLY
+  GENERAL
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  ROLE_CHANGE
+  PAYMENT
+  REFUND
+}
+
+enum ReturnStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  ITEM_RECEIVED
+  REFUND_ISSUED
+}
+
+enum ReservationStatus {
+  PENDING      // stock is held, payment not yet completed
+  CONFIRMED    // order placed — reservation locked to order
+  RELEASED     // manually released (user abandoned checkout)
+  EXPIRED      // auto-released after TTL
+  ROLLED_BACK  // stock restored after terminal payment failure or order cancellation
+}
+
+enum TransactionReason {
+  SALE             // stock out from a customer order
+  RETURN           // stock back from a customer return
+  RESTOCK          // supplier replenishment
+  DAMAGE           // write-off for damaged/expired goods
+  ADJUSTMENT       // manual admin correction
+  PAYMENT_ROLLBACK // stock restored after terminal payment failure
+}
+
+enum RefundStatus {
+  PENDING_REVIEW  // user submitted, awaiting admin decision
+  APPROVED        // admin approved; gateway call is next
+  REJECTED        // admin rejected the request
+  PROCESSING      // refund API called; waiting for webhook confirmation
+  PROCESSED       // webhook confirmed — money is on its way back
+  FAILED          // gateway returned an error
+  CANCELLED       // user or admin cancelled before processing
 }
 
 // ─────────────────────────────────────────
@@ -41,51 +121,182 @@ model User {
   emailVerified  DateTime?
   /// Auth.js: profile picture URL
   image          String?
+  phone          String?
+  isActive       Boolean   @default(true)
+  isBanned       Boolean   @default(false)
+  bannedReason   String?
+  lastLoginAt    DateTime?
+  deletedAt      DateTime?                   // soft delete
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
   // Relations
-  carts     Cart[]
-  orders    Order[]
-  wishlists Wishlist[]
+  carts          Cart[]
+  orders         Order[]
+  wishlists      Wishlist[]
+  addresses      Address[]
+  reviews        Review[]
+  reviewReplies  ReviewReply[]
+  payments       Payment[]
+  notifications  Notification[]
+  auditLogs         AuditLog[]
+  couponsUsed       CouponUsage[]
+  returnRequests    ReturnRequest[]
+  stockReservations        StockReservation[]
+  refundsRequested         Refund[]                  @relation("RefundRequester")
+  refundsReviewed          Refund[]                  @relation("RefundReviewer")
+  inventoryTransactions    InventoryTransaction[]    @relation("InventoryPerformer")
 
   // Indexes
-  @@index([role])       // fast RBAC / admin panel queries
-  @@index([createdAt])  // pagination / sorting by join date
+  @@index([role])                  // fast RBAC / admin panel queries
+  @@index([createdAt])             // pagination / sorting by join date
+  @@index([isActive, isBanned])    // admin user management filter
+  @@index([deletedAt])             // exclude soft-deleted users
   @@map("users")
 }
 
-model Product {
-  id          String   @id @default(cuid())
-  title       String
-  description String
-  price       Float
-  stock       Int
-  rating      Float    @default(0)
-  images      String[] @default([])
-  createdAt   DateTime @default(now())
+// ─────────────────────────────────────────
+// Address
+// ─────────────────────────────────────────
+
+model Address {
+  id           String   @id @default(cuid())
+  label        String   @default("Home")     // "Home", "Work", "Other"
+  fullName     String
+  phone        String
+  addressLine1 String
+  addressLine2 String?
+  city         String
+  state        String
+  country      String   @default("IN")
+  postalCode   String
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
 
   // Foreign key
-  categoryId  String
+  userId       String
 
   // Relations
-  category    Category    @relation(fields: [categoryId], references: [id])
-  carts       Cart[]
-  orderItems  OrderItem[]
-  wishlists   Wishlist[]
-  deal        Deal?
-  newArrival  NewArrival?
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orders       Order[]
+
+  @@index([userId])
+  @@index([userId, isDefault])     // fast lookup for default address
+  @@map("addresses")
+}
+
+// ─────────────────────────────────────────
+// Product
+// ─────────────────────────────────────────
+
+model Product {
+  id           String    @id @default(cuid())
+  title        String
+  slug         String?   @unique              // SEO-friendly URL; null for legacy rows
+  description  String
+  price        Float
+  comparePrice Float?                         // crossed-out "was" price
+  sku          String?   @unique
+  weight       Float?                         // grams, for shipping calculation
+  stock              Int
+  lowStockThreshold  Int       @default(5)    // alert fires when stock < this value
+  rating             Float     @default(0)
+  ratingCount        Int       @default(0)          // total number of ratings
+  images       String[]  @default([])
+  isFeatured   Boolean   @default(false)
+  isActive     Boolean   @default(true)
+  deletedAt    DateTime?                      // soft delete
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @default(now()) @updatedAt
+
+  // Foreign key
+  categoryId   String
+
+  // Relations
+  category     Category         @relation(fields: [categoryId], references: [id])
+  carts        Cart[]
+  orderItems   OrderItem[]
+  wishlists    Wishlist[]
+  deal         Deal?
+  newArrival   NewArrival?
+  inventory    Inventory?
+  reviews       Review[]
+  tags          ProductTag[]
+  variants      ProductVariant[]
+  reservations  StockReservation[]
 
   // Indexes
-  @@index([categoryId])                    // category filter, related products
-  @@index([rating])                        // homepage featured + sort-by-rating
-  @@index([createdAt])                     // default sort on admin + public listings
-  @@index([price])                         // sort-by-price option
-  @@index([categoryId, rating])            // related products: WHERE categoryId = ? ORDER BY rating DESC
-  @@index([categoryId, createdAt])         // category filter + paginated default sort
-  @@index([categoryId, price])             // category filter + sort-by-price
+  @@index([slug])
+  @@index([categoryId])
+  @@index([rating])
+  @@index([createdAt])
+  @@index([price])
+  @@index([isActive, deletedAt])
+  @@index([isFeatured])
+  @@index([categoryId, rating])
+  @@index([categoryId, createdAt])
+  @@index([categoryId, price])
+  @@index([isActive, isFeatured, rating])     // homepage featured products query
   @@map("products")
 }
+
+// ─────────────────────────────────────────
+// Product Variants  (size, color, etc.)
+// ─────────────────────────────────────────
+
+model ProductVariant {
+  id         String  @id @default(cuid())
+  name       String                          // "Size", "Color"
+  value      String                          // "XL", "Red"
+  priceDelta Float   @default(0)             // price difference from base
+  stock      Int     @default(0)
+  reservedQty Int    @default(0)             // soft-held quantity across variant reservations
+  sku        String? @unique
+
+  // Foreign key
+  productId  String
+
+  // Relations
+  product               Product                @relation(fields: [productId], references: [id], onDelete: Cascade)
+  cartItems             Cart[]                 // cart rows carrying this variant
+  reservations          StockReservation[]     // variant-level checkout holds
+  inventoryTransactions InventoryTransaction[] // movement log for this variant
+  orderItems            OrderItem[]            // fulfilled orders for this variant
+
+  @@index([productId])
+  @@map("product_variants")
+}
+
+// ─────────────────────────────────────────
+// Tags  (many-to-many with Product)
+// ─────────────────────────────────────────
+
+model Tag {
+  id       String       @id @default(cuid())
+  name     String       @unique
+  slug     String       @unique
+
+  // Relations
+  products ProductTag[]
+
+  @@map("tags")
+}
+
+model ProductTag {
+  productId String
+  tagId     String
+
+  // Relations
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([productId, tagId])
+  @@map("product_tags")
+}
+
+// ─────────────────────────────────────────
+// Cart
+// ─────────────────────────────────────────
 
 model Cart {
   id        String   @id @default(cuid())
@@ -95,16 +306,20 @@ model Cart {
   // Foreign keys
   userId    String
   productId String
+  variantId String?  // null = base product; non-null = specific variant
 
   // Relations
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
 
-  // One cart row per user+product combination
-  @@unique([userId, productId])
-  // Indexes for fast lookups by either FK
+  // Uniqueness per (user, product, variant).
+  // Postgres treats NULL != NULL so base-product rows (variantId = null) are
+  // deduplicated at the application layer; variant rows are uniquely constrained here.
+  @@unique([userId, productId, variantId])
   @@index([userId])
   @@index([productId])
+  @@index([variantId])
   @@map("carts")
 }
 
@@ -113,43 +328,154 @@ model Cart {
 // ─────────────────────────────────────────
 
 model Order {
-  id          String      @id @default(cuid())
-  totalAmount Float
-  status      OrderStatus @default(PENDING)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id                String      @id @default(cuid())
+  subtotal          Float       @default(0)
+  discountAmount    Float       @default(0)
+  taxAmount         Float       @default(0)
+  shippingAmount    Float       @default(0)
+  totalAmount       Float
+  status            OrderStatus @default(PENDING)
+  notes             String?
+  lockedAt          DateTime?              // set when status → PAYMENT_LOCKED
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
 
   // Foreign keys
-  userId String
+  userId            String
+  shippingAddressId String?
+  couponId          String?
 
   // Relations
-  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  orderItems OrderItem[]
+  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shippingAddress  Address?             @relation(fields: [shippingAddressId], references: [id], onDelete: SetNull)
+  coupon           Coupon?              @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  orderItems       OrderItem[]
+  payment           Payment?
+  returnRequests    ReturnRequest[]
+  statusHistory     OrderStatusHistory[]
+  stockReservations StockReservation[]
+  refunds           Refund[]
 
   @@index([userId])
-  @@index([createdAt])             // ORDER BY createdAt DESC (default sort)
-  @@index([status, createdAt])     // filtered + paginated admin queries
+  @@index([createdAt])
+  @@index([status, createdAt])
+  @@index([userId, status])
+  @@index([couponId])
+  @@index([createdAt, totalAmount])    // revenue analytics range scans
   @@map("orders")
 }
 
 model OrderItem {
-  id       String @id @default(cuid())
-  quantity Int
-  price    Float  // snapshot of product price at time of order
+  id        String @id @default(cuid())
+  quantity  Int
+  price     Float  // snapshot of product price at time of order
 
   // Foreign keys
   orderId   String
   productId String
+  variantId String?  // null for base-product orders; non-null for variant orders
 
   // Relations
-  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  order       Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product     Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variant     ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  refundItems RefundItem[]
 
-  // One row per product per order
+  // One row per product+variant combo per order.
+  // Base-product rows (variantId = null) are kept unique at the app layer.
   @@unique([orderId, productId])
   @@index([orderId])
   @@index([productId])
+  @@index([variantId])
+  @@index([productId, orderId])        // sales per product over time
   @@map("order_items")
+}
+
+// ─────────────────────────────────────────
+// Order Status History
+// ─────────────────────────────────────────
+
+model OrderStatusHistory {
+  id          String      @id @default(cuid())
+  status      OrderStatus
+  note        String?
+  changedById String
+  createdAt   DateTime    @default(now())
+
+  // Foreign key
+  orderId     String
+
+  // Relations
+  order       Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("order_status_history")
+}
+
+// ─────────────────────────────────────────
+// Return Requests
+// ─────────────────────────────────────────
+
+model ReturnRequest {
+  id           String       @id @default(cuid())
+  reason       String
+  status       ReturnStatus @default(REQUESTED)
+  refundAmount Float?
+  images       String[]     @default([])
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  // Foreign keys
+  orderId      String
+  userId       String
+  orderItemId  String
+
+  // Relations
+  order        Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refund       Refund?
+
+  @@index([orderId])
+  @@index([userId])
+  @@index([status])
+  @@map("return_requests")
+}
+
+// ─────────────────────────────────────────
+// Payment
+// ─────────────────────────────────────────
+
+model Payment {
+  id                String          @id @default(cuid())
+  amount            Float
+  currency          String          @default("INR")
+  status            PaymentStatus   @default(PENDING)
+  provider          PaymentProvider
+  providerPaymentId String?         @unique  // e.g. Stripe payment_intent id
+  providerOrderId   String?                  // gateway's own order id
+  receiptUrl        String?
+  failureReason     String?
+  retryCount        Int             @default(0)
+  refundedAmount    Float           @default(0)
+  metadata          Json?                    // raw gateway webhook payload
+  paidAt            DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  // Foreign keys
+  orderId           String          @unique
+  userId            String
+
+  // Relations
+  order             Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user              User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  refunds           Refund[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([provider, status])
+  @@index([providerPaymentId])
+  @@map("payments")
 }
 
 // ─────────────────────────────────────────
@@ -168,11 +494,319 @@ model Wishlist {
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  // One wishlist row per user+product combination
   @@unique([userId, productId])
   @@index([userId])
   @@index([productId])
   @@map("wishlists")
+}
+
+// ─────────────────────────────────────────
+// Inventory
+// ─────────────────────────────────────────
+
+model Inventory {
+  id                String   @id @default(cuid())
+  sku               String   @unique
+  stockQuantity     Int      @default(0)
+  reservedQty       Int      @default(0)       // locked in pending orders
+  reorderLevel      Int      @default(10)      // low-stock alert threshold
+  warehouseLocation String?
+  updatedAt         DateTime @updatedAt
+
+  // Foreign key — one inventory row per product
+  productId         String   @unique
+
+  // Relations
+  product           Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  transactions      InventoryTransaction[]
+
+  @@index([stockQuantity])
+  @@index([sku])
+  @@map("inventory")
+}
+
+model InventoryTransaction {
+  id            String            @id @default(cuid())
+  delta         Int                               // +ve = stock in, -ve = stock out
+  previousStock Int?                              // snapshot of stock BEFORE this change
+  newStock      Int?                              // snapshot of stock AFTER this change
+  reason        TransactionReason                 // DB-level enum — no arbitrary strings
+  reference     String?                           // orderId or supplier invoice number
+  note          String?                           // free-text admin comment
+  createdAt     DateTime          @default(now())
+
+  // Foreign keys
+  inventoryId   String
+  variantId     String?           // non-null when transaction is variant-specific
+  performedById String?           // admin user who triggered this change
+
+  // Relations
+  inventory     Inventory      @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  variant       ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  performedBy   User?          @relation("InventoryPerformer", fields: [performedById], references: [id], onDelete: SetNull)
+
+  @@index([inventoryId])
+  @@index([variantId])
+  @@index([createdAt])
+  @@index([reason])             // filter by reason in admin panel
+  @@index([performedById])
+  @@map("inventory_transactions")
+}
+
+// ─────────────────────────────────────────
+// Stock Reservations
+// ─────────────────────────────────────────
+
+/// Temporary hold on stock while a user is in the checkout flow.
+/// Created when checkout begins; auto-expires after 10 minutes if
+/// payment is not completed. Confirmed when order is placed.
+model StockReservation {
+  id        String            @id @default(cuid())
+  quantity  Int
+  status    ReservationStatus @default(PENDING)
+  expiresAt DateTime          // set to now() + TTL at creation
+  createdAt DateTime          @default(now())
+
+  // Foreign keys
+  productId String
+  userId    String
+  orderId   String?           // null until payment succeeds
+  variantId String?           // null for base-product reservations
+
+  // Relations
+  product   Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order     Order?          @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([productId])
+  @@index([userId])
+  @@index([variantId])
+  @@index([expiresAt, status])   // fast expiry sweep
+  @@index([orderId])
+  @@map("stock_reservations")
+}
+
+// ─────────────────────────────────────────
+// Refunds
+// ─────────────────────────────────────────
+
+/// A refund request raised by a customer for a delivered or returned order.
+/// Full or partial refunds are supported via RefundItem child rows.
+/// Flow: PENDING_REVIEW → APPROVED → PROCESSING → PROCESSED
+///                      → REJECTED
+///                      → FAILED (gateway error — can retry)
+model Refund {
+  id               String       @id @default(cuid())
+
+  /// Stable key used as the idempotency token when calling gateway APIs.
+  /// Format: refund_{paymentId}_{createdAt.getTime()} — set at row creation.
+  idempotencyKey   String       @unique
+
+  requestedAmount  Float                    // sum of RefundItem.amount (validated on create)
+  approvedAmount   Float?                   // admin may approve a lower amount
+  currency         String       @default("INR")
+  status           RefundStatus @default(PENDING_REVIEW)
+  reason           String                   // user-supplied reason
+  adminNote        String?                  // internal note from reviewer
+
+  /// Gateway's own refund reference — set when webhook arrives.
+  /// Unique so a duplicate webhook cannot create a second row.
+  providerRefundId String?      @unique
+  failureReason    String?
+  processedAt      DateTime?    // timestamp of PROCESSED transition
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  // Foreign keys
+  paymentId        String                   // which payment is being refunded
+  orderId          String                   // denormalised for fast admin queries
+  requestedById    String                   // customer
+  reviewedById     String?                  // admin who approved/rejected
+  returnRequestId  String?      @unique     // optional link to return request
+
+  // Relations
+  payment          Payment      @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  order            Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  requestedBy      User         @relation("RefundRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  reviewedBy       User?        @relation("RefundReviewer", fields: [reviewedById], references: [id])
+  returnRequest    ReturnRequest? @relation(fields: [returnRequestId], references: [id], onDelete: SetNull)
+  items            RefundItem[]
+
+  @@index([orderId])
+  @@index([paymentId])
+  @@index([requestedById])
+  @@index([status, createdAt])   // admin queue ordering
+  @@index([providerRefundId])    // idempotent webhook lookup
+  @@map("refunds")
+}
+
+/// Line-item breakdown of a refund — supports partial item-level refunds.
+model RefundItem {
+  id          String  @id @default(cuid())
+  quantity    Int                          // qty being refunded (≤ ordered qty)
+  amount      Float                        // refund value for this line (qty × unit price)
+
+  // Foreign keys
+  refundId    String
+  orderItemId String
+
+  // Relations
+  refund      Refund   @relation(fields: [refundId], references: [id], onDelete: Cascade)
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+
+  @@unique([refundId, orderItemId])    // one refund row per item per refund request
+  @@index([refundId])
+  @@index([orderItemId])
+  @@map("refund_items")
+}
+
+// ─────────────────────────────────────────
+// Coupon
+// ─────────────────────────────────────────
+
+model Coupon {
+  id                String     @id @default(cuid())
+  code              String     @unique
+  type              CouponType
+  value             Float                          // percentage or flat amount
+  minOrderAmount    Float      @default(0)
+  maxDiscountAmount Float?                         // cap for percentage coupons
+  maxUsageCount     Int?                           // null = unlimited global uses
+  maxUsagePerUser   Int        @default(1)
+  usageCount        Int        @default(0)
+  isActive          Boolean    @default(true)
+  startsAt          DateTime   @default(now())
+  expiresAt         DateTime?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  // Relations
+  orders            Order[]
+  usages            CouponUsage[]
+
+  @@index([code])
+  @@index([isActive, expiresAt])
+  @@map("coupons")
+}
+
+model CouponUsage {
+  id       String   @id @default(cuid())
+  usedAt   DateTime @default(now())
+
+  // Foreign keys
+  couponId String
+  userId   String
+  orderId  String   @unique
+
+  // Relations
+  coupon   Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([couponId, userId, orderId])
+  @@index([couponId])
+  @@index([userId])
+  @@map("coupon_usages")
+}
+
+// ─────────────────────────────────────────
+// Reviews
+// ─────────────────────────────────────────
+
+model Review {
+  id           String   @id @default(cuid())
+  rating       Int                              // 1–5
+  title        String?
+  body         String
+  isVerified   Boolean  @default(false)         // verified purchase
+  isApproved   Boolean  @default(false)         // admin moderation gate
+  helpfulCount Int      @default(0)
+  images       String[] @default([])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Foreign keys
+  userId       String
+  productId    String
+
+  // Relations
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product      Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  replies      ReviewReply[]
+
+  @@unique([userId, productId])           // one review per user per product
+  @@index([productId, isApproved])
+  @@index([productId, rating])
+  @@index([userId])
+  @@map("reviews")
+}
+
+model ReviewReply {
+  id        String   @id @default(cuid())
+  body      String
+  createdAt DateTime @default(now())
+
+  // Foreign keys
+  authorId  String
+  reviewId  String
+
+  // Relations
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  review    Review   @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@index([reviewId])
+  @@map("review_replies")
+}
+
+// ─────────────────────────────────────────
+// Notifications
+// ─────────────────────────────────────────
+
+model Notification {
+  id        String           @id @default(cuid())
+  type      NotificationType
+  title     String
+  body      String
+  isRead    Boolean          @default(false)
+  metadata  Json?                              // e.g. { orderId, productId }
+  createdAt DateTime         @default(now())
+
+  // Foreign key
+  userId    String
+
+  // Relations
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+// ─────────────────────────────────────────
+// Audit Log
+// ─────────────────────────────────────────
+
+model AuditLog {
+  id            String      @id @default(cuid())
+  action        AuditAction
+  entity        String                           // "Order", "Product", "User" …
+  entityId      String
+  oldValue      Json?                            // snapshot before change
+  newValue      Json?                            // snapshot after change
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime    @default(now())
+
+  // Foreign key
+  performedById String
+
+  // Relations
+  performedBy   User        @relation(fields: [performedById], references: [id], onDelete: Restrict)
+
+  @@index([entity, entityId])
+  @@index([performedById])
+  @@index([createdAt])
+  @@map("audit_logs")
 }
 
 // ─────────────────────────────────────────
@@ -181,21 +815,21 @@ model Wishlist {
 
 model Deal {
   id              String   @id @default(cuid())
-  discountPercent Float    // e.g. 25 means 25 % off the product price
-  badgeLabel      String   @default("Deal")  // "Flash Sale", "Weekend Deal" …
+  discountPercent Float
+  badgeLabel      String   @default("Deal")
   startsAt        DateTime @default(now())
   endsAt          DateTime
   isActive        Boolean  @default(true)
   createdAt       DateTime @default(now())
 
   // Foreign key — one deal per product
-  productId String @unique
+  productId       String   @unique
 
   // Relations
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  @@index([isActive, endsAt])      // filter currently-active deals
-  @@index([discountPercent])       // sort by biggest discount
+  @@index([isActive, endsAt])
+  @@index([discountPercent])
   @@map("deals")
 }
 
@@ -209,12 +843,12 @@ model NewArrival {
   isActive   Boolean  @default(true)
 
   // Foreign key — each product featured at most once
-  productId String @unique
+  productId  String   @unique
 
   // Relations
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  @@index([isActive, featuredAt])  // filter active new arrivals, sorted by date
+  @@index([isActive, featuredAt])
   @@map("new_arrivals")
 }
 
@@ -223,18 +857,27 @@ model NewArrival {
 // ─────────────────────────────────────────
 
 model Category {
-  id          String   @id @default(cuid())
-  name        String   @unique
-  slug        String   @unique  // URL-friendly identifier, e.g. "mens-clothing"
+  id          String     @id @default(cuid())
+  name        String     @unique
+  slug        String     @unique
   description String?
-  imageUrl    String?           // optional category banner/icon
-  createdAt   DateTime @default(now())
+  imageUrl    String?
+  sortOrder   Int        @default(0)
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+
+  // Self-relation for subcategories
+  parentId    String?
+  parent      Category?  @relation("Subcategories", fields: [parentId], references: [id])
+  children    Category[] @relation("Subcategories")
 
   // Relations
   products    Product[]
 
-  @@index([name])   // search/filter by name
-  @@index([slug])   // URL routing lookups
+  @@index([name])
+  @@index([slug])
+  @@index([parentId])
+  @@index([isActive])
   @@map("categories")
 }
 
@@ -251,4 +894,25 @@ model NewsletterSubscription {
   @@index([email])
   @@index([isActive])
   @@map("newsletter_subscriptions")
+}
+
+// ─────────────────────────────────────────
+// Feature Flags
+// ─────────────────────────────────────────
+
+/// Runtime feature flags toggled from the admin dashboard.
+/// Business logic reads these via isEnabled() in lib/actions/feature-flags.ts.
+/// Values are cached in Redis (5 min TTL) so flag checks add < 1 ms overhead.
+model FeatureFlag {
+  id          String   @id @default(cuid())
+  /// Stable machine key — matches a value in FLAGS (lib/flags.ts)
+  name        String   @unique
+  enabled     Boolean  @default(false)
+  description String?                    // human-readable purpose shown in admin UI
+  updatedById String?                    // userId of the last admin who toggled it
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([name])
+  @@map("feature_flags")
 }

@@ -5,18 +5,37 @@ import authConfig from "@/auth.config";
 import type { Role } from "@prisma/client";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Auth.js middleware instance — uses the edge-safe config (no Prisma/bcrypt).
+// Auth.js proxy instance — uses the edge-safe config (no Prisma/bcrypt).
 // The JWT is read directly from the request cookie; no database calls happen.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const { auth } = NextAuth(authConfig);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Security headers (applied to every response)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SECURITY_HEADERS: Record<string, string> = {
+  // Prevent the page from being embedded in iframes (clickjacking protection)
+  "X-Frame-Options": "DENY",
+  // Prevent MIME-type sniffing
+  "X-Content-Type-Options": "nosniff",
+  // Control referrer information
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  // Restrict browser features
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(self)",
+  // Force HTTPS for 2 years (including subdomains)
+  "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+  // Basic XSS protection fallback for old browsers
+  "X-XSS-Protection": "1; mode=block",
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Route protection rules
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Routes that require the user to be authenticated (any role). */
-const AUTH_ROUTES = ["/cart", "/checkout"];
+const AUTH_ROUTES = ["/cart", "/checkout", "/orders", "/profile"];
 
 /** Routes that require ADMIN or SUPERADMIN. */
 const ADMIN_ROUTES = ["/admin"];
@@ -32,17 +51,20 @@ function matchesAny(pathname: string, prefixes: string[]): boolean {
   return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
-function redirectTo(destination: string, req: NextRequest): NextResponse {
-  return NextResponse.redirect(new URL(destination, req.url));
+function withSecurityHeaders(res: NextResponse): NextResponse {
+  Object.entries(SECURITY_HEADERS).forEach(([key, value]) => {
+    res.headers.set(key, value);
+  });
+  return res;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Middleware handler
-// ─────────────────────────────────────────────────────────────────────────────
+function redirectTo(destination: string, req: NextRequest): NextResponse {
+  return withSecurityHeaders(NextResponse.redirect(new URL(destination, req.url)));
+}
 
-/** Passthrough — lets the request continue unmodified. */
+/** Passthrough — lets the request continue, but always attaches security headers. */
 function passthrough(): NextResponse {
-  return NextResponse.next();
+  return withSecurityHeaders(NextResponse.next());
 }
 
 export default auth((req) => {
@@ -80,14 +102,14 @@ export default auth((req) => {
     return passthrough();
   }
 
-  // ── 4. All other routes — no restriction ──────────────────────────────────
+  // ── 4. All other routes — no restriction, but still add security headers ──
   return passthrough();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Matcher — runs middleware only on relevant paths.
-// Excludes static assets, Next.js internals, and the auth API routes so they
-// are never blocked by the middleware guard.
+// Matcher — runs only on relevant paths.
+// Excludes static assets, Next.js internals, and auth API routes so they
+// are never blocked by the proxy guard.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const config = {

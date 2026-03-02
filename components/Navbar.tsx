@@ -2,8 +2,11 @@
 import { Suspense } from "react";
 import NavbarClient from "./NavbarClient";
 import CartCount, { CartCountPill } from "./CartCount";
+import WishlistCount, { WishlistCountPill } from "./WishlistCount";
 import { auth } from "@/lib/auth";
 import { getCategories } from "@/lib/queries/category";
+import { isEnabled } from "@/lib/actions/feature-flags";
+import { FLAGS } from "@/lib/flags";
 import type { Role } from "@/types";
 
 /**
@@ -16,9 +19,10 @@ import type { Role } from "@/types";
  * to an empty list rather than breaking the whole header.
  */
 export default async function Navbar() {
-  const [session, categories] = await Promise.all([
+  const [session, categories, wishlistEnabled] = await Promise.all([
     auth(),
     getCategories().catch(() => []),
+    isEnabled(FLAGS.WISHLIST_ENABLED),
   ]);
 
   const isLoggedIn = !!session?.user;
@@ -29,6 +33,7 @@ export default async function Navbar() {
       isLoggedIn={isLoggedIn}
       role={role}
       categories={categories}
+      wishlistEnabled={wishlistEnabled}
       cartCountBadge={
         isLoggedIn ? (
           <Suspense fallback={null}>
@@ -40,6 +45,20 @@ export default async function Navbar() {
         isLoggedIn ? (
           <Suspense fallback={null}>
             <CartCountPill />
+          </Suspense>
+        ) : null
+      }
+      wishlistCountBadge={
+        wishlistEnabled && isLoggedIn ? (
+          <Suspense fallback={null}>
+            <WishlistCount />
+          </Suspense>
+        ) : null
+      }
+      wishlistCountPill={
+        wishlistEnabled && isLoggedIn ? (
+          <Suspense fallback={null}>
+            <WishlistCountPill />
           </Suspense>
         ) : null
       }

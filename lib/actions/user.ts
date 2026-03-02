@@ -173,3 +173,81 @@ export async function deleteUser(userId: string): Promise<ActionResult> {
     return { success: false, message };
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// banUser
+//
+// Sets isBanned = true with an optional reason.
+// Guards: caller must be SUPERADMIN; cannot ban another SUPERADMIN.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function banUser(
+  userId: string,
+  reason: string = "Violated terms of service.",
+): Promise<ActionResult> {
+  try {
+    const callerId = await requireSuperAdmin();
+
+    if (callerId === userId) {
+      return { success: false, message: "You cannot ban your own account." };
+    }
+
+    const target = await prisma.user.findUnique({
+      where:  { id: userId },
+      select: { id: true, role: true, isBanned: true },
+    });
+
+    if (!target) return { success: false, message: "User not found." };
+    if (target.role === "SUPERADMIN")
+      return { success: false, message: "Cannot ban a SUPERADMIN account." };
+    if (target.isBanned)
+      return { success: false, message: "User is already banned." };
+
+    await prisma.user.update({
+      where: { id: userId },
+      data:  { isBanned: true, bannedReason: reason, isActive: false },
+    });
+
+    revalidateUserRoutes();
+    return { success: true, message: "User banned successfully." };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "An unexpected error occurred.";
+    console.error("[banUser]", error);
+    return { success: false, message };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// unbanUser
+//
+// Clears isBanned and restores isActive.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function unbanUser(userId: string): Promise<ActionResult> {
+  try {
+    await requireSuperAdmin();
+
+    const target = await prisma.user.findUnique({
+      where:  { id: userId },
+      select: { id: true, role: true, isBanned: true },
+    });
+
+    if (!target) return { success: false, message: "User not found." };
+    if (target.role === "SUPERADMIN")
+      return { success: false, message: "Cannot modify a SUPERADMIN account." };
+    if (!target.isBanned)
+      return { success: false, message: "User is not banned." };
+
+    await prisma.user.update({
+      where: { id: userId },
+      data:  { isBanned: false, bannedReason: null, isActive: true },
+    });
+
+    revalidateUserRoutes();
+    return { success: true, message: "User unbanned successfully." };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "An unexpected error occurred.";
+    console.error("[unbanUser]", error);
+    return { success: false, message };
+  }
+}

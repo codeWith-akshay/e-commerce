@@ -76,10 +76,12 @@ export default function ProductCard({
   product,
   priority = false,
   isWishlisted = false,
+  showWishlist = true,
 }: {
   product: ProductCardData;
   priority?: boolean;
   isWishlisted?: boolean;
+  showWishlist?: boolean;
 }) {
   const image = product.images[0];
   const isLowStock = product.stock > 0 && product.stock <= 5;
@@ -110,7 +112,7 @@ export default function ProductCard({
         )}
 
         {/* Wishlist button — client island */}
-        <WishlistButton productId={product.id} isWishlisted={isWishlisted} />
+        {showWishlist && <WishlistButton productId={product.id} isWishlisted={isWishlisted} />}
 
         {/* Stock badge */}
         {isOutOfStock && (

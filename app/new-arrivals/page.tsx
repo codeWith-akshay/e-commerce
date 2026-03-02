@@ -5,6 +5,8 @@ import NewArrivalsFilters from "@/components/NewArrivalsFilters";
 import Pagination from "@/components/Pagination";
 import { queryNewArrivals } from "@/lib/queries/new-arrival";
 import { getWishlistProductIds } from "@/lib/actions/wishlist";
+import { isEnabled }              from "@/lib/actions/feature-flags";
+import { FLAGS }                  from "@/lib/flags";
 import type { NewArrivalsSearchParams } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -39,8 +41,11 @@ export default async function NewArrivalsPage({ searchParams }: PageProps) {
   });
 
   // Pre-fetch wishlist state (null when logged out)
-  const wishlistedIds = await getWishlistProductIds().catch(() => [] as string[]);
-  const wishlistedSet = new Set(wishlistedIds);
+  const [wishlistEnabled, wishlistedIds] = await Promise.all([
+    isEnabled(FLAGS.WISHLIST_ENABLED),
+    getWishlistProductIds().catch(() => new Set<string>()),
+  ]);
+  const wishlistedSet = wishlistEnabled ? wishlistedIds : new Set<string>();
 
   // Preserved params for pagination links
   const preserved: Record<string, string | undefined> = {
@@ -107,6 +112,7 @@ export default async function NewArrivalsPage({ searchParams }: PageProps) {
                 item={item}
                 priority={idx < 4}
                 isWishlisted={wishlistedSet.has(item.product.id)}
+                showWishlist={wishlistEnabled}
               />
             ))}
           </div>

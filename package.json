@@ -27,14 +27,23 @@
   "dependencies": {
     "@prisma/adapter-pg": "^7.4.1",
     "@prisma/client": "^7.4.1",
+    "@sentry/nextjs": "^10.40.0",
+    "@upstash/ratelimit": "^2.0.8",
+    "@upstash/redis": "^1.36.2",
     "bcryptjs": "^3.0.3",
+    "exceljs": "^4.4.0",
     "lucide-react": "^0.575.0",
     "next": "16.1.6",
     "next-auth": "5.0.0-beta.30",
     "pg": "^8.18.0",
+    "razorpay": "^2.9.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "recharts": "^3.7.0"
+    "recharts": "^3.7.0",
+    "resend": "^6.9.3",
+    "stripe": "^20.4.0",
+    "typesense": "^3.0.1",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@next/bundle-analyzer": "^16.1.6",

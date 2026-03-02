@@ -31,6 +31,25 @@ function prismaError(err: unknown): WishlistActionResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Revalidation helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Invalidate all pages that display per-user wishlist state so they re-render
+ * with fresh data.  Also revalidates the root layout so the Navbar's
+ * WishlistCount badge reflects the new count immediately.
+ */
+function revalidateWishlistPaths(productId: string) {
+  revalidatePath("/", "layout");        // navbar WishlistCount badge (all pages)
+  revalidatePath("/");                  // home page featured products
+  revalidatePath("/wishlist");          // wishlist page itself
+  revalidatePath("/products");          // product listing
+  revalidatePath(`/products/${productId}`); // individual product detail
+  revalidatePath("/deals");             // deals listing
+  revalidatePath("/new-arrivals");      // new arrivals listing
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // toggleWishlist
 // Adds the product to the wishlist if it isn't there; removes it if it is.
 // Returns the NEW wishlisted state so the client can update optimistically.
@@ -61,8 +80,7 @@ export async function toggleWishlist(
     if (existing) {
       // Already wishlisted → remove
       await prisma.wishlist.delete({ where: { id: existing.id } });
-      revalidatePath("/products");
-      revalidatePath(`/products/${productId}`);
+      revalidateWishlistPaths(productId);
       return { success: true, data: { wishlisted: false } };
     }
 
@@ -76,8 +94,7 @@ export async function toggleWishlist(
     }
 
     await prisma.wishlist.create({ data: { userId, productId } });
-    revalidatePath("/products");
-    revalidatePath(`/products/${productId}`);
+    revalidateWishlistPaths(productId);
     return { success: true, data: { wishlisted: true } };
   } catch (err) {
     return prismaError(err);
@@ -105,5 +122,61 @@ export async function getWishlistProductIds(): Promise<Set<string>> {
   } catch {
     // Non-critical — fall back to empty set rather than breaking the page
     return new Set();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getWishlist
+// Full wishlist rows with product details for the /wishlist page.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type WishlistItem = {
+  id:        string;
+  createdAt: Date;
+  product: {
+            id:          string;
+            title:       string;
+            description: string;
+            price:       number;
+            stock:       number;
+            rating:      number;
+            images:      string[];
+            isActive:    boolean;
+            category: { name: string };
+          };
+};
+
+export async function getWishlist(): Promise<WishlistActionResult<WishlistItem[]>> {
+  const userId = await getSessionUserId();
+  if (!userId) {
+    return { success: false, error: "You must be logged in.", code: "UNAUTHENTICATED" };
+  }
+
+  try {
+    const rows = await prisma.wishlist.findMany({
+      where:   { userId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id:        true,
+        createdAt: true,
+        product: {
+          select: {
+            id:          true,
+            title:       true,
+            description: true,
+            price:       true,
+            stock:       true,
+            rating:      true,
+            images:      true,
+            isActive:    true,
+            category: { select: { name: true } },
+          },
+        },
+      },
+    });
+
+    return { success: true, data: rows };
+  } catch (err) {
+    return prismaError(err);
   }
 }

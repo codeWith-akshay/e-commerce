@@ -11,10 +11,12 @@
 // The order summary beside this form is server-rendered — this island only
 // owns the address fields and the submit button.
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Loader2, AlertCircle } from "lucide-react";
 import { placeOrderAction } from "@/lib/actions/order";
 import type { ActionResult, PlacedOrder } from "@/lib/actions/order";
+import CouponField from "@/components/CouponField";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Field config — drives rendering to avoid repetition
@@ -59,10 +61,17 @@ const FIELDS: FieldDef[] = [
     autoComplete: "address-level2",
   },
   {
+    name: "state",
+    label: "State / Province",
+    placeholder: "California",
+    autoComplete: "address-level1",
+  },
+  {
     name: "pincode",
     label: "Pincode / ZIP",
     placeholder: "10001",
     autoComplete: "postal-code",
+    colSpan: "full",
   },
 ];
 
@@ -83,11 +92,23 @@ function parseFieldErrors(state: ActionResult<PlacedOrder> | null): Record<strin
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function CheckoutForm() {
+interface CheckoutFormProps {
+  subtotal: number;
+  shipping: number;
+}
+
+export default function CheckoutForm({ subtotal, shipping }: CheckoutFormProps) {
+  const router = useRouter();
   const [state, formAction, isPending] = useActionState<
     ActionResult<PlacedOrder> | null,
     FormData
   >(placeOrderAction, null);
+
+  useEffect(() => {
+    if (state?.success && state.data) {
+      router.push(`/checkout/success?orderId=${state.data.orderId}`);
+    }
+  }, [state, router]);
 
   const fieldErrors = parseFieldErrors(state);
 
@@ -110,6 +131,9 @@ export default function CheckoutForm() {
             <span>{globalError}</span>
           </div>
         )}
+
+        {/* Coupon code */}
+        <CouponField subtotal={subtotal} />
 
         {/* Address fields */}
         <div className="grid grid-cols-2 gap-4">

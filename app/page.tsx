@@ -18,6 +18,8 @@ import ProductCard, { type ProductCardData } from "@/components/ProductCard";
 import NewsletterForm from "@/components/NewsletterForm";
 import prisma from "@/lib/prisma";
 import { getWishlistProductIds } from "@/lib/actions/wishlist";
+import { isEnabled } from "@/lib/actions/feature-flags";
+import { FLAGS } from "@/lib/flags";
 
 // ── Always dynamic — homepage shows per-user wishlist state ──────────────────
 export const dynamic = "force-dynamic";
@@ -273,11 +275,12 @@ function NoProducts() {
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default async function HomePage() {
-  const [featuredProducts, siteStats, wishlistedIds, dbCategories] = await Promise.all([
+  const [featuredProducts, siteStats, wishlistedIds, dbCategories, wishlistEnabled] = await Promise.all([
     getFeaturedProducts(),
     getSiteStats(),
     getWishlistProductIds(),
     getCategoriesWithImages(),
+    isEnabled(FLAGS.WISHLIST_ENABLED),
   ]);
 
   const stats = [
@@ -478,6 +481,7 @@ export default async function HomePage() {
                 key={product.id}
                 product={product}
                 isWishlisted={wishlistedIds.has(product.id)}
+                showWishlist={wishlistEnabled}
               />
             ))
           ) : (

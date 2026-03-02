@@ -2,6 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { ShoppingCart, ShoppingBag } from "lucide-react";
 import { getCart } from "@/lib/actions/cart";
+import { getShippingCalc } from "@/lib/actions/order";
 import { QuantityForm, RemoveForm, ClearCartButton } from "@/components/CartItemControls";
 
 // Never cache the cart — always fresh
@@ -10,13 +11,6 @@ export const dynamic = "force-dynamic";
 export const metadata = {
   title: "Your Cart | ShopNext",
 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Constants
-// ─────────────────────────────────────────────────────────────────────────────
-
-const FREE_SHIPPING_THRESHOLD = 50;
-const SHIPPING_FEE = 5.99;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Category badge colours (matches ProductCard / product detail page)
@@ -104,12 +98,16 @@ export default async function CartPage() {
 
   // ── Calculations ───────────────────────────────────────────────────────────
   const subtotal = items.reduce(
-    (sum, item) => sum + item.product.price * item.quantity,
+    (sum, item) =>
+      sum + (item.product.price + (item.variant?.priceDelta ?? 0)) * item.quantity,
     0
   );
-  const shipping = subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_FEE;
-  const total = subtotal + shipping;
   const totalQty = items.reduce((sum, item) => sum + item.quantity, 0);
+  // getShippingCalc checks the FREE_SHIPPING_PROMO feature flag — the backend
+  // is the single source of truth so cart, checkout, and order creation agree.
+  const shippingCalc = await getShippingCalc(subtotal);
+  const shipping     = shippingCalc.amount;
+  const total        = subtotal + shipping;
 
   // ── Cart page ──────────────────────────────────────────────────────────────
   return (
@@ -134,7 +132,8 @@ export default async function CartPage() {
             const badgeClass =
               CATEGORY_COLORS[item.product.category.name] ?? "bg-gray-100 text-gray-600";
             const imageUrl = item.product.images?.[0] ?? null;
-            const lineTotal = item.product.price * item.quantity;
+            const unitPrice = item.product.price + (item.variant?.priceDelta ?? 0);
+            const lineTotal = unitPrice * item.quantity;
 
             return (
               <article
@@ -177,8 +176,14 @@ export default async function CartPage() {
                     >
                       {item.product.title}
                     </Link>
+                    {/* Variant label e.g. "Size: XL" */}
+                    {item.variant && (
+                      <p className="text-xs text-gray-400">
+                        {item.variant.name}: {item.variant.value}
+                      </p>
+                    )}
                     <p className="text-sm text-gray-500">
-                      ${item.product.price.toFixed(2)} each
+                      ${unitPrice.toFixed(2)} each
                     </p>
                   </div>
 
@@ -188,7 +193,7 @@ export default async function CartPage() {
                       <QuantityForm
                         cartItemId={item.id}
                         quantity={item.quantity}
-                        stock={item.product.stock}
+                        stock={item.variant?.stock ?? item.product.stock}
                       />
                       <RemoveForm cartItemId={item.id} />
                     </div>
@@ -221,10 +226,10 @@ export default async function CartPage() {
                 <span className="font-medium text-gray-900">${shipping.toFixed(2)}</span>
               )}
             </li>
-            {shipping > 0 && (
+            {/* Only show the upsell hint when the promo is actually active */}
+            {shippingCalc.promoActive && shipping > 0 && (
               <li className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                Add ${(FREE_SHIPPING_THRESHOLD - subtotal).toFixed(2)} more for free
-                shipping
+                Add ${(shippingCalc.threshold - subtotal).toFixed(2)} more for free shipping
               </li>
             )}
           </ul>

@@ -24,6 +24,8 @@ export interface AddToCartFormProps {
   productId: string;
   productTitle: string;
   stock: number;
+  /** Pass the selected variant's id to add a specific variant to the cart. */
+  variantId?: string | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,6 +36,7 @@ export default function AddToCartForm({
   productId,
   productTitle,
   stock,
+  variantId,
 }: AddToCartFormProps) {
   const [state, formAction, isPending] = useActionState<
     ActionResult<{ cartItemId: string; quantity: number }> | null,
@@ -83,6 +86,7 @@ export default function AddToCartForm({
         {/* Hidden fields — read by addToCartAction via FormData */}
         <input type="hidden" name="productId" value={productId} />
         <input type="hidden" name="quantity" value={qty} />
+        {variantId && <input type="hidden" name="variantId" value={variantId} />}
 
         {/* Quantity picker — updates `qty` state which feeds the hidden input */}
         {!isOutOfStock && (

@@ -19,6 +19,12 @@ import {
 import prisma from "@/lib/prisma";
 import type { RevenueDataPoint } from "@/components/RevenueChart";
 import RevenueChartClient from "@/components/RevenueChartClient";
+import {
+  getDashboardSummary,
+  getRevenueByPeriod,
+  getUserGrowthByDay,
+  type DailyUserGrowth,
+} from "@/lib/queries/analytics";
 
 // ── Revalidate every 60 s (ISR) ───────────────────────────────────────────────
 export const revalidate = 60;
@@ -95,7 +101,7 @@ async function getOrderStatusBreakdown() {
     orderBy: { _count: { status: "desc" } },
   });
   const total = rows.reduce((s, r) => s + r._count.status, 0) || 1;
-  return rows.map((r) => ({ status: r.status, count: r._count.status, pct: Math.round((r._count.status / total) * 100) }));
+  return rows.map((r) => ({ status: r.status, count: r._count.status, percentage: Math.round((r._count.status / total) * 100) }));
 }
 
 async function getRecentOrders() {
@@ -131,31 +137,42 @@ async function getTopProducts() {
 }
 
 async function getLowStockProducts() {
-  const raw = await prisma.product.findMany({
-    where:   { stock: { lte: 10 } },
-    orderBy: { stock: "asc" },
-    take:    5,
-    select:  { id: true, title: true, stock: true, category: { select: { name: true } }, images: true },
-  });
-  return raw.map(({ category, ...p }) => ({ ...p, category: category.name }));
+  // Use each product's own lowStockThreshold instead of a hardcoded number.
+  // Prisma doesn't support "WHERE stock < lowStockThreshold" in findMany,
+  // so we use a raw query and limit to 5 for the dashboard widget.
+  const raw = await prisma.$queryRaw<
+    { id: string; title: string; stock: number; lowStockThreshold: number; category: string; images: string[] }[]
+  >`
+    SELECT p.id, p.title, p.stock, p."lowStockThreshold",
+           c.name AS category, p.images
+    FROM   products p
+    JOIN   categories c ON c.id = p."categoryId"
+    WHERE  p.stock < p."lowStockThreshold"
+      AND  p."isActive" = true
+      AND  p."deletedAt" IS NULL
+    ORDER BY p.stock ASC
+    LIMIT 5
+  `;
+  return raw;
 }
 
 async function getMonthlyRevenue(): Promise<RevenueDataPoint[]> {
-  const rows = await prisma.$queryRaw<{ month: Date; revenue: number }[]>`
-    SELECT
-      DATE_TRUNC('month', "createdAt") AS month,
-      COALESCE(SUM("totalAmount"), 0)  AS revenue
-    FROM orders
-    WHERE
-      status NOT IN ('CANCELLED', 'PENDING')
-      AND "createdAt" >= NOW() - INTERVAL '12 months'
-    GROUP BY 1
-    ORDER BY 1
-  `;
-  return rows.map((r) => ({
-    month:   new Date(r.month).toLocaleString("en-US", { month: "short", year: "2-digit" }),
-    revenue: Number(r.revenue),
-  }));
+  // Use the centralised analytics query (30-day daily breakdown aggregated by month)
+  try {
+    const daily = await getRevenueByPeriod(365);
+    // Group by "Mon YY" label for the chart
+    const map = new Map<string, number>();
+    for (const point of daily) {
+      const label = new Date(point.date).toLocaleString("en-US", {
+        month: "short",
+        year:  "2-digit",
+      });
+      map.set(label, (map.get(label) ?? 0) + point.revenue);
+    }
+    return Array.from(map.entries()).map(([month, revenue]) => ({ month, revenue }));
+  } catch {
+    return [];
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -208,9 +225,128 @@ function StatCard({
   );
 }
 
+// ── User Growth Widget (server component — no JS chart needed) ────────────────
+function UserGrowthWidget({
+  rows,
+  total30d,
+}: {
+  rows:     DailyUserGrowth[];
+  total30d: number;
+}) {
+  // Show last 14 days (or all if fewer)
+  const visible  = rows.slice(-14);
+  const maxDaily = Math.max(...visible.map((r) => r.newUsers), 1);
+
+  // Today vs yesterday delta
+  const today     = visible[visible.length - 1]?.newUsers ?? 0;
+  const yesterday = visible[visible.length - 2]?.newUsers ?? 0;
+  const dayDelta  = today - yesterday;
+
+  return (
+    <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/60">
+      {/* Header */}
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="text-base font-semibold text-slate-800">User Growth</h3>
+          <p className="text-xs text-slate-400 mt-0.5">New registrations · last 30 days</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="text-right">
+            <p className="text-2xl font-bold text-slate-800">{total30d}</p>
+            <p className="text-xs text-slate-400">new users</p>
+          </div>
+          {dayDelta !== 0 && (
+            <span
+              className={`inline-flex items-center gap-0.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
+                dayDelta > 0
+                  ? "bg-emerald-100 text-emerald-700"
+                  : "bg-red-100 text-red-600"
+              }`}
+            >
+              {dayDelta > 0 ? "+" : ""}
+              {dayDelta} today
+            </span>
+          )}
+        </div>
+      </div>
+
+      {visible.length === 0 ? (
+        <p className="py-8 text-center text-sm text-slate-400">No registration data yet.</p>
+      ) : (
+        <>
+          {/* Spark bar chart */}
+          <div className="mb-5 flex h-20 items-end gap-1">
+            {visible.map((row) => {
+              const heightPct = Math.max((row.newUsers / maxDaily) * 100, 4);
+              return (
+                <div
+                  key={row.date}
+                  className="group relative flex-1"
+                  title={`${row.date}: ${row.newUsers} new user${row.newUsers !== 1 ? "s" : ""}`}
+                >
+                  <div
+                    className="w-full rounded-t-sm bg-sky-400 transition-all group-hover:bg-sky-500"
+                    style={{ height: `${heightPct}%` }}
+                  />
+                  {/* inline tooltip on hover */}
+                  <div className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                    {row.newUsers}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Last 7 rows table */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-100 text-left text-slate-400">
+                  <th className="pb-2 font-medium">Date</th>
+                  <th className="pb-2 text-right font-medium">New</th>
+                  <th className="pb-2 text-right font-medium">Total</th>
+                  <th className="w-32 pb-2 font-medium" />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.slice(-7).reverse().map((row) => {
+                  const barPct = Math.round((row.newUsers / maxDaily) * 100);
+                  return (
+                    <tr key={row.date} className="border-b border-slate-50 last:border-0">
+                      <td className="py-1.5 text-slate-500">
+                        {new Date(row.date).toLocaleDateString("en-US", {
+                          month: "short", day: "numeric",
+                        })}
+                      </td>
+                      <td className="py-1.5 text-right font-semibold text-slate-800">
+                        {row.newUsers}
+                      </td>
+                      <td className="py-1.5 text-right text-slate-400">
+                        {row.cumulative.toLocaleString()}
+                      </td>
+                      <td className="py-1.5 pl-3">
+                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                          <div
+                            className="h-full rounded-full bg-sky-400"
+                            style={{ width: `${barPct}%` }}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default async function AdminDashboardPage() {
-  const [stats, statusBreakdown, recentOrders, topProducts, lowStock, monthlyRevenue] =
+  const [stats, statusBreakdown, recentOrders, topProducts, lowStock, monthlyRevenue, summary, userGrowth] =
     await Promise.all([
       getStats(),
       getOrderStatusBreakdown(),
@@ -218,6 +354,8 @@ export default async function AdminDashboardPage() {
       getTopProducts(),
       getLowStockProducts(),
       getMonthlyRevenue(),
+      getDashboardSummary(),
+      getUserGrowthByDay(30),
     ]);
 
   const today = new Date().toLocaleDateString("en-US", {
@@ -250,6 +388,18 @@ export default async function AdminDashboardPage() {
               className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-indigo-600 shadow-sm transition hover:bg-indigo-50"
             >
               <ShoppingCart className="h-4 w-4" /> View Orders
+            </Link>
+            <Link
+              href="/admin/inventory"
+              className="inline-flex items-center gap-2 rounded-xl bg-white/20 px-4 py-2 text-sm font-semibold text-white backdrop-blur-sm transition hover:bg-white/30"
+            >
+              <Box className="h-4 w-4" /> Inventory
+            </Link>
+            <Link
+              href="/admin/audit"
+              className="inline-flex items-center gap-2 rounded-xl bg-white/20 px-4 py-2 text-sm font-semibold text-white backdrop-blur-sm transition hover:bg-white/30"
+            >
+              <AlertTriangle className="h-4 w-4" /> Audit Log
             </Link>
           </div>
         </div>
@@ -289,6 +439,27 @@ export default async function AdminDashboardPage() {
         />
       </div>
 
+      {/* ── 30-day analytics summary ── */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7">
+        {[
+          { label: "Revenue (30d)",    value: `$${fmt(summary.totalRevenue30d)}` },
+          { label: "Orders (30d)",     value: summary.totalOrders30d.toLocaleString() },
+          { label: "Avg Order Value",  value: `$${fmt(summary.averageOrderValue)}` },
+          { label: "New Users (30d)",  value: summary.newUsers30d.toLocaleString() },
+          { label: "Pending Orders",   value: summary.pendingOrders.toLocaleString() },
+          { label: "Delivered (30d)",  value: summary.deliveredOrders30d.toLocaleString() },
+          { label: "Cancelled (30d)",  value: summary.cancelledOrders30d.toLocaleString() },
+        ].map((item) => (
+          <div key={item.label} className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-xs">
+            <p className="text-xs font-medium text-gray-400">{item.label}</p>
+            <p className="mt-1 text-lg font-bold text-gray-900">{item.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* ── User growth (last 30 days) ── */}
+      <UserGrowthWidget rows={userGrowth} total30d={summary.newUsers30d} />
+
       {/* ── Revenue chart + Order status side by side ── */}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
 
@@ -321,7 +492,7 @@ export default async function AdminDashboardPage() {
             <p className="py-10 text-center text-sm text-slate-400">No orders yet.</p>
           ) : (
             <ul className="space-y-3">
-              {statusBreakdown.map(({ status, count, pct }) => {
+              {statusBreakdown.map(({ status, count, percentage }) => {
                 const cfg = STATUS_CFG[status] ?? STATUS_CFG.PENDING;
                 const Icon = cfg.icon;
                 return (
@@ -331,12 +502,12 @@ export default async function AdminDashboardPage() {
                         <Icon className="h-3.5 w-3.5 text-slate-400" />
                         {status.charAt(0) + status.slice(1).toLowerCase()}
                       </span>
-                      <span className="text-xs text-slate-400">{count} ({pct}%)</span>
+                      <span className="text-xs text-slate-400">{count} ({percentage}%)</span>
                     </div>
                     <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
                       <div
                         className={`h-full rounded-full ${cfg.bar} transition-all`}
-                        style={{ width: `${pct}%` }}
+                        style={{ width: `${percentage}%` }}
                       />
                     </div>
                   </li>
@@ -430,6 +601,11 @@ export default async function AdminDashboardPage() {
                   }`}>
                     {p.stock === 0 ? "Out of stock" : `${p.stock} left`}
                   </span>
+                  {p.stock > 0 && (
+                    <span className="ml-1 shrink-0 text-[10px] text-slate-400">
+                      / {p.lowStockThreshold} threshold
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>

@@ -40,6 +40,10 @@ interface NavbarClientProps {
   cartCountBadge?: React.ReactNode;
   /** Pre-rendered server badge for the mobile cart link (inline pill). */
   cartCountPill?: React.ReactNode;
+  /** Pre-rendered server badge for the desktop wishlist icon. */
+  wishlistCountBadge?: React.ReactNode;
+  /** Pre-rendered server pill for the mobile wishlist link. */
+  wishlistCountPill?: React.ReactNode;
   /** Whether a user session exists (set by the server component). */
   isLoggedIn?: boolean;
   /** Role from the JWT session — drives conditional link visibility. */
@@ -51,6 +55,8 @@ interface NavbarClientProps {
    * Populates the Products dropdown — no hardcoded list, always in sync with the DB.
    */
   categories?: CategoryItem[];
+  /** Whether the WISHLIST_ENABLED feature flag is active. */
+  wishlistEnabled?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -60,10 +66,13 @@ interface NavbarClientProps {
 export default function NavbarClient({
   cartCountBadge,
   cartCountPill,
+  wishlistCountBadge,
+  wishlistCountPill,
   isLoggedIn = false,
   role,
   announcement = "🎉 Free shipping on orders over $50 · Use code WELCOME10 for 10% off",
   categories = [],
+  wishlistEnabled = false,
 }: NavbarClientProps) {
   const isAdmin      = role === "ADMIN" || role === "SUPERADMIN";
   const isSuperAdmin = role === "SUPERADMIN";
@@ -281,8 +290,17 @@ export default function NavbarClient({
               <Search className="h-5 w-5" aria-hidden="true" />
             </button>
 
-            {/* Wishlist */}
-           
+            {/* Wishlist — only shown when flag is on and user is logged in */}
+            {wishlistEnabled && isLoggedIn && (
+              <Link
+                href="/wishlist"
+                aria-label="My wishlist"
+                className="relative rounded-full p-2 text-gray-600 transition hover:bg-gray-100 hover:text-pink-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-400"
+              >
+                <Heart className="h-5 w-5" aria-hidden="true" />
+                {wishlistCountBadge}
+              </Link>
+            )}
 
             {/* Cart — only shown when authenticated */}
             {isLoggedIn && (
@@ -455,14 +473,20 @@ export default function NavbarClient({
             </Link>
           )}
 
-          <Link
-            href="/wishlist"
-            onClick={closeMobile}
-            className="flex items-center gap-2 rounded-xl bg-gray-50 px-4 py-3 text-sm font-medium text-gray-700 transition hover:bg-indigo-50 hover:text-indigo-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
-          >
-            <Heart className="h-4 w-4" aria-hidden="true" />
-            Wishlist
-          </Link>
+          {/* Wishlist — only shown when flag is on and user is logged in */}
+          {wishlistEnabled && isLoggedIn && (
+            <Link
+              href="/wishlist"
+              onClick={closeMobile}
+              className="flex items-center justify-between rounded-xl bg-gray-50 px-4 py-3 text-sm font-medium text-gray-700 transition hover:bg-pink-50 hover:text-pink-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-400"
+            >
+              <span className="flex items-center gap-2">
+                <Heart className="h-4 w-4" aria-hidden="true" />
+                Wishlist
+              </span>
+              {wishlistCountPill}
+            </Link>
+          )}
 
           {/* Role-gated mobile links */}
           {isAdmin && (

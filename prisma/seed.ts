@@ -1431,6 +1431,84 @@ async function main() {
     console.log(`   ✅  ${title}`);
   }
 
+  // ── Step 5: Upsert inventory records ─────────────────────────────────────
+  console.log("\n📦  Seeding inventory…");
+
+  const INVENTORY_SEED = [
+    {
+      productTitle:      "MacBook Pro 14-inch M3",
+      sku:               "SKU-ELEC-MBP14M3",
+      stockQuantity:     45,
+      reservedQty:       3,
+      reorderLevel:      10,
+      warehouseLocation: "Zone A · Aisle A1 · Shelf 3",
+    },
+    {
+      productTitle:      "Sony WH-1000XM5 Headphones",
+      sku:               "SKU-ELEC-SONYWH5",
+      stockQuantity:     120,
+      reservedQty:       8,
+      reorderLevel:      20,
+      warehouseLocation: "Zone A · Aisle A2 · Shelf 1",
+    },
+    {
+      productTitle:      "Nike Air Max 270 Sneakers",
+      sku:               "SKU-CLTH-NIKEAM270",
+      stockQuantity:     200,
+      reservedQty:       15,
+      reorderLevel:      30,
+      warehouseLocation: "Zone C · Aisle C3 · Shelf 2",
+    },
+    {
+      productTitle:      "Breville Barista Express Espresso Machine",
+      sku:               "SKU-HK-BREVBAR",
+      stockQuantity:     35,
+      reservedQty:       2,
+      reorderLevel:      8,
+      warehouseLocation: "Zone H · Aisle H1 · Shelf 5",
+    },
+    {
+      productTitle:      "Adjustable Dumbbell Set 5–52.5 lbs",
+      sku:               "SKU-SP-ADJDMB",
+      stockQuantity:     60,
+      reservedQty:       5,
+      reorderLevel:      15,
+      warehouseLocation: "Zone S · Aisle S2 · Shelf 4",
+    },
+  ];
+
+  for (const inv of INVENTORY_SEED) {
+    const productId = productMap.get(inv.productTitle);
+    if (!productId) {
+      console.warn(
+        `   ⚠️   Product not found: "${inv.productTitle}" — skipping inventory`
+      );
+      continue;
+    }
+
+    await prisma.inventory.upsert({
+      where: { productId },
+      update: {
+        sku:               inv.sku,
+        stockQuantity:     inv.stockQuantity,
+        reservedQty:       inv.reservedQty,
+        reorderLevel:      inv.reorderLevel,
+        warehouseLocation: inv.warehouseLocation,
+      },
+      create: {
+        productId,
+        sku:               inv.sku,
+        stockQuantity:     inv.stockQuantity,
+        reservedQty:       inv.reservedQty,
+        reorderLevel:      inv.reorderLevel,
+        warehouseLocation: inv.warehouseLocation,
+      },
+    });
+    console.log(
+      `   ✅  ${inv.productTitle}  (SKU: ${inv.sku} · Stock: ${inv.stockQuantity} · Location: ${inv.warehouseLocation})`
+    );
+  }
+
   console.log("\n✅  Seed completed successfully.");
 }
 

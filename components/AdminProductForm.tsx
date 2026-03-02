@@ -21,13 +21,14 @@ import { AlertCircle } from "lucide-react";
 // ── Shared types ──────────────────────────────────────────────────────────────
 
 export interface ProductDefaults {
-  title:       string;
-  description: string;
-  price:       number;
-  stock:       number;
-  categoryId:  string;
-  rating:      number;
-  images:      string[];
+  title:              string;
+  description:        string;
+  price:              number;
+  stock:              number;
+  lowStockThreshold:  number;
+  categoryId:         string;
+  rating:             number;
+  images:             string[];
 }
 
 // ── Shared field helpers ──────────────────────────────────────────────────────
@@ -165,6 +166,25 @@ export default function AdminProductForm({ productId, defaults, categories = [] 
           />
           <FieldError message={e.stock} />
         </div>
+      </div>
+
+      {/* ── Row 3b: Low Stock Threshold ── */}
+      <div>
+        <Label htmlFor="lowStockThreshold">Low Stock Alert Threshold</Label>
+        <input
+          id="lowStockThreshold"
+          name="lowStockThreshold"
+          type="number"
+          min={0}
+          step={1}
+          placeholder="5"
+          defaultValue={defaults?.lowStockThreshold ?? 5}
+          className={inputClass(!!e.lowStockThreshold)}
+        />
+        <p className="mt-1 text-xs text-slate-400">
+          An admin notification is created whenever stock falls below this number.
+        </p>
+        <FieldError message={e.lowStockThreshold} />
       </div>
 
       {/* ── Row 4: Category + Rating ── */}

@@ -17,9 +17,12 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 function createPrismaClient(): PrismaClient {
-  const adapter = new PrismaPg({
-    connectionString: process.env.DATABASE_URL!,
-  });
+  // pg-connection-string treats 'require' as an alias for 'verify-full'; replace
+  // it explicitly to silence the upcoming breaking-change warning in pg v9.
+  const rawUrl = process.env.DATABASE_URL!;
+  const connectionString = rawUrl.replace(/sslmode=require/gi, "sslmode=verify-full");
+
+  const adapter = new PrismaPg({ connectionString });
 
   return new PrismaClient({
     adapter,

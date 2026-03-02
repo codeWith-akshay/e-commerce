@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { getSessionUserId } from "@/lib/session";
+import { invalidate, CacheKeys } from "@/lib/redis";
+import { z } from "zod";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared result type
@@ -15,6 +17,25 @@ import { getSessionUserId } from "@/lib/session";
 export type ActionResult<T = undefined> =
   | { success: true; data?: T }
   | { success: false; error: string; code?: string };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Validation schemas
+// ─────────────────────────────────────────────────────────────────────────────
+
+const addToCartSchema = z.object({
+  productId: z.string().cuid("Invalid product ID."),
+  quantity:  z.number().int().min(1).max(99).default(1),
+  variantId: z.string().cuid("Invalid variant ID.").optional().nullable(),
+});
+
+const updateCartSchema = z.object({
+  cartItemId: z.string().cuid("Invalid cart item ID."),
+  quantity:   z.number().int().min(0).max(99),
+});
+
+const removeCartSchema = z.object({
+  cartItemId: z.string().cuid("Invalid cart item ID."),
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers
@@ -56,15 +77,18 @@ function prismaError(err: unknown): ActionResult {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Add a product to the authenticated user's cart.
- * - If a cart row already exists for (userId, productId), increments quantity.
- * - Otherwise creates a new row with quantity = 1.
+ * Add a product (optionally a specific variant) to the authenticated user's cart.
+ * - If a cart row already exists for (userId, productId, variantId), increments quantity.
+ * - Otherwise creates a new row.
+ * - Stock check uses variant.stock when variantId is supplied.
  * - Revalidates /cart so any cached page reflects the change immediately.
  */
 export async function addToCart(
   productId: string,
   /** How many units to add. Defaults to 1. */
-  quantity = 1
+  quantity  = 1,
+  /** Specific variant to add. Null / undefined = base product. */
+  variantId?: string | null,
 ): Promise<ActionResult<{ cartItemId: string; quantity: number }>> {
   // ── Auth ────────────────────────────────────────────────────────────────────
   const userId = await getSessionUserId();
@@ -73,38 +97,59 @@ export async function addToCart(
   }
 
   // ── Validate input ──────────────────────────────────────────────────────────
-  if (!productId?.trim()) {
-    return { success: false, error: "Invalid product.", code: "INVALID_INPUT" };
+  const parsed = addToCartSchema.safeParse({ productId, quantity, variantId });
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input.", code: "INVALID_INPUT" };
   }
 
+  const resolvedVariantId = parsed.data.variantId ?? null;
+
   try {
-    // ── Verify product exists & is in stock ─────────────────────────────────
+    // ── Verify product exists & is active ───────────────────────────────────
     const product = await prisma.product.findUnique({
       where: { id: productId },
-      select: { id: true, stock: true, title: true },
+      select: { id: true, stock: true, title: true, isActive: true },
     });
 
-    if (!product) {
+    if (!product || !product.isActive) {
       return { success: false, error: "Product not found.", code: "NOT_FOUND" };
     }
 
-    if (product.stock === 0) {
+    // ── Resolve available stock (variant overrides parent when present) ──────
+    let availableStock = product.stock;
+
+    if (resolvedVariantId) {
+      const variant = await prisma.productVariant.findUnique({
+        where: { id: resolvedVariantId, productId }, // also validates variant belongs to this product
+        select: { id: true, stock: true },
+      });
+
+      if (!variant) {
+        return { success: false, error: "Product variant not found.", code: "NOT_FOUND" };
+      }
+
+      availableStock = variant.stock;
+    }
+
+    if (availableStock === 0) {
       return { success: false, error: `"${product.title}" is out of stock.`, code: "OUT_OF_STOCK" };
     }
 
-    // ── Upsert cart row ─────────────────────────────────────────────────────
-    // Check existing first so we can cap at MAX_QUANTITY before writing.
-    const existing = await prisma.cart.findUnique({
-      where: { userId_productId: { userId, productId } },
+    // ── Look up existing cart row ───────────────────────────────────────────
+    // Use findFirst (not findUnique) because the DB unique constraint on
+    // (userId, productId, variantId) does not enforce uniqueness for NULL
+    // variantId in Postgres — so we always rely on the application query.
+    const existing = await prisma.cart.findFirst({
+      where: { userId, productId, variantId: resolvedVariantId },
       select: { id: true, quantity: true },
     });
 
     const addQty = Math.max(1, Math.floor(quantity));
 
     if (existing) {
-      const newQty = Math.min(existing.quantity + addQty, MAX_QUANTITY, product.stock);
+      const newQty = Math.min(existing.quantity + addQty, MAX_QUANTITY, availableStock);
 
-      if (existing.quantity >= Math.min(MAX_QUANTITY, product.stock)) {
+      if (existing.quantity >= Math.min(MAX_QUANTITY, availableStock)) {
         return {
           success: false,
           error: `You already have the maximum available quantity in your cart.`,
@@ -120,17 +165,24 @@ export async function addToCart(
 
       revalidatePath("/cart");
       revalidatePath("/", "layout");
+      await invalidate(CacheKeys.cartCount(userId));
       return { success: true, data: { cartItemId: updated.id, quantity: updated.quantity } };
     }
 
     // New cart row
     const created = await prisma.cart.create({
-      data: { userId, productId, quantity: Math.min(addQty, product.stock, MAX_QUANTITY) },
+      data: {
+        userId,
+        productId,
+        variantId: resolvedVariantId,
+        quantity:  Math.min(addQty, availableStock, MAX_QUANTITY),
+      },
       select: { id: true, quantity: true },
     });
 
     revalidatePath("/cart");
     revalidatePath("/", "layout");
+    await invalidate(CacheKeys.cartCount(userId));
     return { success: true, data: { cartItemId: created.id, quantity: created.quantity } };
   } catch (err) {
     console.error("[addToCart]", err);
@@ -153,10 +205,11 @@ export async function addToCartAction(
   _prevState: ActionResult<{ cartItemId: string; quantity: number }> | null,
   formData: FormData
 ): Promise<ActionResult<{ cartItemId: string; quantity: number }>> {
-  const productId = (formData.get("productId") as string | null)?.trim() ?? "";
+  const productId  = (formData.get("productId")  as string | null)?.trim() ?? "";
+  const variantId  = (formData.get("variantId")  as string | null)?.trim() || null;
   const quantityRaw = formData.get("quantity");
   const quantity = quantityRaw ? Math.max(1, parseInt(String(quantityRaw), 10) || 1) : 1;
-  return addToCart(productId, quantity);
+  return addToCart(productId, quantity, variantId);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -176,37 +229,41 @@ export async function updateCartQuantity(
     return { success: false, error: "You must be logged in.", code: "UNAUTHENTICATED" };
   }
 
-  if (!cartItemId?.trim()) {
-    return { success: false, error: "Invalid cart item.", code: "INVALID_INPUT" };
-  }
-
-  const qty = Math.floor(quantity);
-
-  if (qty < 0 || qty > MAX_QUANTITY) {
-    return { success: false, error: `Quantity must be between 0 and ${MAX_QUANTITY}.`, code: "INVALID_INPUT" };
+  const parsed = updateCartSchema.safeParse({ cartItemId, quantity: Math.floor(quantity) });
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input.", code: "INVALID_INPUT" };
   }
 
   try {
-    // Ownership check — ensure the item belongs to this user
+    // Cap at available stock — use variant.stock when the item is variant-specific
     const item = await prisma.cart.findUnique({
       where: { id: cartItemId },
-      select: { id: true, userId: true, product: { select: { stock: true } } },
+      select: {
+        id:      true,
+        userId:  true,
+        variant: { select: { stock: true } },
+        product: { select: { stock: true } },
+      },
     });
 
     if (!item || item.userId !== userId) {
       return { success: false, error: "Cart item not found.", code: "NOT_FOUND" };
     }
 
+    const qty = parsed.data.quantity;
+
     // qty = 0 → delete
     if (qty === 0) {
       await prisma.cart.delete({ where: { id: cartItemId } });
       revalidatePath("/cart");
       revalidatePath("/", "layout");
+      await invalidate(CacheKeys.cartCount(userId));
       return { success: true, data: { quantity: 0 } };
     }
 
-    // Cap at available stock
-    const safeQty = Math.min(qty, item.product.stock, MAX_QUANTITY);
+    // Cap at available stock (variant overrides parent when present)
+    const availableStock = item.variant?.stock ?? item.product.stock;
+    const safeQty = Math.min(qty, availableStock, MAX_QUANTITY);
 
     const updated = await prisma.cart.update({
       where: { id: cartItemId },
@@ -216,6 +273,7 @@ export async function updateCartQuantity(
 
     revalidatePath("/cart");
     revalidatePath("/", "layout");
+    await invalidate(CacheKeys.cartCount(userId));
     return { success: true, data: { quantity: updated.quantity } };
   } catch (err) {
     console.error("[updateCartQuantity]", err);
@@ -270,8 +328,9 @@ export async function removeFromCart(cartItemId: string): Promise<ActionResult> 
     return { success: false, error: "You must be logged in.", code: "UNAUTHENTICATED" };
   }
 
-  if (!cartItemId?.trim()) {
-    return { success: false, error: "Invalid cart item.", code: "INVALID_INPUT" };
+  const parsed = removeCartSchema.safeParse({ cartItemId });
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input.", code: "INVALID_INPUT" };
   }
 
   try {
@@ -289,6 +348,7 @@ export async function removeFromCart(cartItemId: string): Promise<ActionResult> 
 
     revalidatePath("/cart");
     revalidatePath("/", "layout");
+    await invalidate(CacheKeys.cartCount(userId));
     return { success: true };
   } catch (err) {
     console.error("[removeFromCart]", err);
@@ -312,6 +372,7 @@ export async function clearCart(): Promise<ActionResult<{ deleted: number }>> {
 
     revalidatePath("/cart");
     revalidatePath("/", "layout");
+    await invalidate(CacheKeys.cartCount(userId));
     return { success: true, data: { deleted: count } };
   } catch (err) {
     console.error("[clearCart]", err);
@@ -327,12 +388,22 @@ export type CartLineItem = {
   id: string;
   quantity: number;
   createdAt: Date;
+  variantId: string | null;
+  /** Null for base-product cart rows. */
+  variant: {
+    id:         string;
+    name:       string;        // e.g. "Size"
+    value:      string;        // e.g. "XL"
+    sku:        string | null;
+    priceDelta: number;        // adjustment on top of product.price
+    stock:      number;
+  } | null;
   product: {
-    id: string;
-    title: string;
-    price: number;
+    id:     string;
+    title:  string;
+    price:  number;
     images: string[];
-    stock: number;
+    stock:  number;
     category: { name: string };
   };
 };
@@ -352,16 +423,27 @@ export async function getCart(): Promise<ActionResult<CartLineItem[]>> {
       where: { userId },
       orderBy: { createdAt: "asc" },
       select: {
-        id: true,
-        quantity: true,
+        id:        true,
+        quantity:  true,
         createdAt: true,
+        variantId: true,
+        variant: {
+          select: {
+            id:         true,
+            name:       true,
+            value:      true,
+            sku:        true,
+            priceDelta: true,
+            stock:      true,
+          },
+        },
         product: {
           select: {
-            id: true,
-            title: true,
-            price: true,
-            images: true,
-            stock: true,
+            id:       true,
+            title:    true,
+            price:    true,
+            images:   true,
+            stock:    true,
             category: { select: { name: true } },
           },
         },

@@ -19,6 +19,8 @@ interface AddToCartButtonProps {
   productId: string;
   productTitle: string;
   stock: number;
+  /** Pass the selected variant's id to add a specific variant to the cart. */
+  variantId?: string | null;
   className?: string;
 }
 
@@ -26,6 +28,7 @@ export default function AddToCartButton({
   productId,
   productTitle,
   stock,
+  variantId,
   className,
 }: AddToCartButtonProps) {
   const [isPending, startTransition] = useTransition();
@@ -55,7 +58,7 @@ export default function AddToCartButton({
     if (isOutOfStock || isPending || added) return;
 
     startTransition(async () => {
-      const result = await addToCart(productId, 1);
+      const result = await addToCart(productId, 1, variantId ?? undefined);
       if (result.success) {
         setAdded(true);
         showToast("success", `"${productTitle}" added to your cart!`);

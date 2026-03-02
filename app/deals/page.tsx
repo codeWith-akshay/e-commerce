@@ -5,6 +5,8 @@ import DealsFilters from "@/components/DealsFilters";
 import Pagination from "@/components/Pagination";
 import { queryDeals } from "@/lib/queries/deal";
 import { getWishlistProductIds } from "@/lib/actions/wishlist";
+import { isEnabled }              from "@/lib/actions/feature-flags";
+import { FLAGS }                  from "@/lib/flags";
 import type { DealsSearchParams } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -41,8 +43,11 @@ export default async function DealsPage({ searchParams }: PageProps) {
   });
 
   // Pre-fetch wishlist state (server-side, null when logged out)
-  const wishlistedIds = await getWishlistProductIds().catch(() => [] as string[]);
-  const wishlistedSet = new Set(wishlistedIds);
+  const [wishlistEnabled, wishlistedIds] = await Promise.all([
+    isEnabled(FLAGS.WISHLIST_ENABLED),
+    getWishlistProductIds().catch(() => new Set<string>()),
+  ]);
+  const wishlistedSet = wishlistEnabled ? wishlistedIds : new Set<string>();
 
   // Preserved params for pagination links
   const preserved: Record<string, string | undefined> = {
@@ -110,6 +115,7 @@ export default async function DealsPage({ searchParams }: PageProps) {
                 deal={deal}
                 priority={idx < 4}
                 isWishlisted={wishlistedSet.has(deal.product.id)}
+                showWishlist={wishlistEnabled}
               />
             ))}
           </div>

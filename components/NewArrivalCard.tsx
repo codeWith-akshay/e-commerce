@@ -64,10 +64,12 @@ export default function NewArrivalCard({
   item,
   priority = false,
   isWishlisted = false,
+  showWishlist = true,
 }: {
   item:          NewArrivalListItem;
   priority?:     boolean;
   isWishlisted?: boolean;
+  showWishlist?: boolean;
 }) {
   const { product, featuredAt } = item;
   const image        = product.images[0];
@@ -117,9 +119,11 @@ export default function NewArrivalCard({
         )}
 
         {/* Wishlist */}
-        <div className="absolute right-2.5 bottom-2.5 z-10 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-          <WishlistButton productId={product.id} isWishlisted={isWishlisted} />
-        </div>
+        {showWishlist && (
+          <div className="absolute right-2.5 bottom-2.5 z-10 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+            <WishlistButton productId={product.id} isWishlisted={isWishlisted} />
+          </div>
+        )}
       </div>
 
       {/* ── Info ── */}

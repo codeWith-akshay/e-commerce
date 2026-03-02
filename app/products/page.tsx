@@ -7,6 +7,8 @@ import ProductsPagination from "@/components/ProductsPagination";
 import { queryProducts } from "@/lib/queries/product";
 import type { ProductsSearchParams } from "@/types";
 import { getWishlistProductIds } from "@/lib/actions/wishlist";
+import { isEnabled }              from "@/lib/actions/feature-flags";
+import { FLAGS }                  from "@/lib/flags";
 
 // ProductsSearchParams lives in @/types — re-exported here for any legacy imports
 export type { ProductsSearchParams };
@@ -137,10 +139,16 @@ function ProductGridSkeleton() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function ProductGrid({ params }: { params: ProductsSearchParams }) {
-  const [data, wishlistedIds] = await Promise.all([
+  const [data, wishlistEnabled, rawIds] = await Promise.all([
     queryProducts(toQueryParams(params)),
+    isEnabled(FLAGS.WISHLIST_ENABLED),
     getWishlistProductIds(),
   ]);
+  // Normalise to Set<string> regardless of whether getWishlistProductIds returns
+  // a string[] or a Set<string>, and skip the set entirely when disabled.
+  const wishlistedIds = new Set<string>(
+    wishlistEnabled ? (rawIds as unknown as Iterable<string>) : []
+  );
 
   const hasFilters = !!(
     params.search ||
@@ -181,6 +189,7 @@ async function ProductGrid({ params }: { params: ProductsSearchParams }) {
               product={product}
               priority={i < 4}
               isWishlisted={wishlistedIds.has(product.id)}
+              showWishlist={wishlistEnabled}
             />
           ))
         ) : (

@@ -5,6 +5,8 @@ import "./globals.css";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import ConditionalShell from "@/components/ConditionalShell";
+import { isEnabled } from "@/lib/actions/feature-flags";
+import { FLAGS }     from "@/lib/flags";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -67,11 +69,12 @@ function NavbarSkeleton() {
   );
 }
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const maintenanceMode = await isEnabled(FLAGS.MAINTENANCE_MODE);
   return (
     <html lang="en" suppressHydrationWarning>
       <body
@@ -102,6 +105,14 @@ export default function RootLayout({
           }
           footer={<Footer />}
         >
+          {maintenanceMode && (
+            <div
+              role="alert"
+              className="w-full bg-amber-500 px-4 py-2.5 text-center text-xs font-semibold text-white shadow-sm"
+            >
+              🚧 ShopNest is currently undergoing scheduled maintenance. Some features may be temporarily unavailable.
+            </div>
+          )}
           {children}
         </ConditionalShell>
       </body>
