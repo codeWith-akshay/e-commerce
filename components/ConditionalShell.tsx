@@ -18,14 +18,12 @@ export default function ConditionalShell({ navbar, footer, children }: Props) {
   );
 
   if (isAppShell) {
-    // Admin / superadmin — constrain to the same max-w-7xl used by the
-    // Navbar and Footer so all three align horizontally.
     return (
       <>
         {navbar}
         <main
           id="main-content"
-          className="mx-auto w-full max-w-7xl px-4 sm:px-6"
+          className="w-full"
         >
           {children}
         </main>
@@ -40,7 +38,7 @@ export default function ConditionalShell({ navbar, footer, children }: Props) {
 
       <main
         id="main-content"
-        className="mx-auto min-h-[calc(100vh-4rem)] w-full max-w-7xl px-4 py-8 sm:px-6"
+        className="w-full min-h-[calc(100vh-4rem)] px-4 sm:px-6 lg:px-8 py-8"
       >
         {children}
       </main>
